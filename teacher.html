@@ -1,0 +1,97 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Teacher – SemaAfrica</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Nunito+Sans:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css"></head><body>
+<div class="kanga"></div>
+<div class="app">
+  <nav class="side" id="side" aria-label="Teacher menu"><a class="logo" href="index.html">Sema<b>Africa</b></a></nav>
+  <main class="main wide"><h1 id="title"></h1><div id="view"></div></main>
+</div>
+<script type="module">
+import {auth,db,storage,HOME} from "./js/firebase.js";
+import {onAuthStateChanged,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {doc,getDoc,collection,query,where,getDocs,addDoc,updateDoc,Timestamp,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {ref,uploadBytes,getDownloadURL} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
+const $=id=>document.getElementById(id), view=$("view");
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const T=l=>l.start.toDate(), fd=d=>d.toLocaleDateString([],{weekday:"short",day:"numeric",month:"short"}), ft=d=>d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+const mon=d=>{d=new Date(d);d.setHours(0,0,0,0);d.setDate(d.getDate()-((d.getDay()+6)%7));return d};
+const ST={open:"Open slot",booked:"Booked",attended:"Attended",absent:"Absent",cancelled:"Cancelled"};
+const empty=(t,p)=>`<div class="empty"><strong>${t}</strong><p>${p}</p></div>`;
+let uid,me,students=[],lessons=[],mats=[],prog=[],week=mon(new Date()),cur="timetable",pick="";
+const nameOf=id=>(students.find(s=>s.id===id)||{}).name||"";
+const opts=(sel)=>students.map(s=>`<option value="${s.id}" ${s.id===sel?"selected":""}>${esc(s.name)}</option>`).join("");
+
+async function load(){
+  const own=c=>getDocs(query(collection(db,c),where("teacherId","==",uid))).then(s=>s.docs.map(d=>({id:d.id,...d.data()})));
+  [lessons,mats,prog]=await Promise.all([own("lessons"),own("materials"),own("progress")]);
+  lessons.sort((a,b)=>T(a)-T(b));
+  prog.sort((a,b)=>b.date.toMillis()-a.date.toMillis());
+  students=(await getDocs(query(collection(db,"users"),where("role","==","student")))).docs.map(d=>({id:d.id,...d.data()}));
+}
+const lessonRow=(l,acts="")=>`<div class="row"><div><strong>${fd(T(l))}, ${ft(T(l))}</strong> <span class="pill">${ST[l.status]||l.status}</span>
+  <small>${esc(l.studentName||"No student yet")} · ${esc(l.type)} · ${l.duration} min</small></div><div class="acts">${l.meetLink?`<a class="btn line sm" href="${esc(l.meetLink)}" target="_blank" rel="noopener">Join</a>`:""}${acts}</div></div>`;
+const btn=(a,id,t,line=true)=>`<button class="btn sm ${line?"line":""}" data-act="${a}" data-id="${id}">${t}</button>`;
+
+const PAGES={
+students:["Student list",()=>{
+  const att=id=>lessons.filter(l=>l.studentId===id&&l.status==="attended").length;
+  return `<label>Search<input id="q" placeholder="Type a name or email"></label><div id="list">${students.length?students.map(s=>`<div class="row" data-s="${esc((s.name+s.email).toLowerCase())}"><div><strong>${esc(s.name)}</strong><small>${esc(s.email)} · ${esc(s.goal||"")} · ${att(s.id)} lessons attended</small></div>
+   <div class="acts">${btn("prog",s.id,"Record progress")}</div></div>`).join(""):empty("No students yet","Students appear here after they create an account.")}</div>`},
+ ()=>{const q=$("q");if(q)q.oninput=()=>document.querySelectorAll("[data-s]").forEach(r=>r.hidden=!r.dataset.s.includes(q.value.toLowerCase()))}],
+timetable:["Weekly timetable",()=>{
+  const days=[...Array(7)].map((_,i)=>{const d=new Date(week);d.setDate(d.getDate()+i);return d});
+  return `<form class="form" id="slotF"><label>Date<input type="date" id="sd" required></label><label>Time<input type="time" id="st" required></label>
+  <label>Length<select id="sl"><option>25</option><option selected>45</option></select></label>
+  <label>Type<select id="sy"><option>Trial lesson</option><option selected>Single lesson</option><option>Monthly plan lesson</option></select></label>
+  <label>Student (optional)<select id="ss"><option value="">Open slot</option>${opts()}</select></label>
+  <label>Meeting link<input id="sm" type="url" placeholder="https://meet.google.com/…"></label>
+  <button class="btn">Add to timetable</button><p class="msg full" id="m"></p></form>
+  <div class="nav2">${btn("prev","","Previous week")}<strong>${fd(days[0])} – ${fd(days[6])}</strong>${btn("next","","Next week")}${btn("today","","This week")}</div>
+  <div class="week">${days.map(d=>`<div class="day"><h3>${fd(d)}</h3>${lessons.filter(l=>T(l).toDateString()===d.toDateString()).map(l=>`<div class="slot ${l.status==="open"?"open":""}"><strong>${ft(T(l))}</strong> ${l.duration}m<br>${esc(l.studentName||"Open")}</div>`).join("")}</div>`).join("")}</div>`},
+ ()=>{$("slotF").onsubmit=async e=>{e.preventDefault();const s=$("ss").value;
+   await addDoc(collection(db,"lessons"),{teacherId:uid,teacherName:me.name,studentId:s,studentName:nameOf(s),start:Timestamp.fromDate(new Date($("sd").value+"T"+$("st").value)),
+   duration:+$("sl").value,type:$("sy").value,meetLink:$("sm").value.trim(),status:s?"booked":"open"});
+   await refresh("Added to your timetable.")}}],
+upcoming:["Upcoming lessons",()=>{const now=Date.now();
+  const l=lessons.filter(x=>T(x)>=now&&["open","booked"].includes(x.status));
+  return l.length?l.map(x=>lessonRow(x,btn("cancelled",x.id,"Cancel"))).join(""):empty("No upcoming lessons","Add slots in Weekly timetable.")}],
+materials:["Learning materials",()=>`<form class="form" id="matF"><label>Title<input id="mt" required></label><label>File (PDF, audio, image)<input type="file" id="mf" required></label>
+  <label>For student<select id="ms"><option value="">All my students</option>${opts()}</select></label><button class="btn">Upload</button><p class="msg full" id="m"></p></form>`+
+  (mats.length?mats.map(m=>`<div class="row"><div><strong>${esc(m.title)}</strong><small>${m.studentName?esc(m.studentName):"All my students"}</small></div><a class="btn line sm" href="${esc(m.url)}" target="_blank" rel="noopener">Open</a></div>`).join(""):empty("Nothing uploaded","Notes and exercises you upload show up for your students.")),
+ ()=>{$("matF").onsubmit=async e=>{e.preventDefault();const f=$("mf").files[0];if(!f)return;$("m").textContent="Uploading…";
+   try{const r=ref(storage,`materials/${uid}/${Date.now()}-${f.name.replace(/[^\w.-]/g,"_")}`);await uploadBytes(r,f);const s=$("ms").value;
+   await addDoc(collection(db,"materials"),{teacherId:uid,title:$("mt").value.trim(),url:await getDownloadURL(r),studentId:s,studentName:nameOf(s),createdAt:serverTimestamp()});
+   await refresh("Uploaded.")}catch(x){$("m").className="msg err";$("m").textContent="Upload failed: "+x.code}}}],
+progress:["Student progress",()=>`<form class="form" id="pF"><label>Student<select id="ps" required><option value="">Choose…</option>${opts(pick)}</select></label>
+  <label>Level<select id="pl"><option>Beginner (A1)</option><option>Elementary (A2)</option><option>Intermediate (B1)</option><option>Upper intermediate (B2)</option></select></label>
+  <label class="full">Topic covered<input id="pt" required></label><label class="full">Notes (strengths, what to practise)<textarea id="pn"></textarea></label>
+  <button class="btn">Save progress</button><p class="msg full" id="m"></p></form>`+
+  (prog.length?prog.slice(0,25).map(p=>`<div class="row"><div><strong>${esc(p.studentName)}</strong> <span class="pill">${esc(p.level)}</span><small>${fd(p.date.toDate())} · ${esc(p.topic)}<br>${esc(p.notes)}</small></div></div>`).join(""):empty("No records yet","Record what each student covered after a lesson.")),
+ ()=>{$("pF").onsubmit=async e=>{e.preventDefault();const s=$("ps").value;if(!s)return;
+   await addDoc(collection(db,"progress"),{teacherId:uid,studentId:s,studentName:nameOf(s),level:$("pl").value,topic:$("pt").value.trim(),notes:$("pn").value.trim(),date:Timestamp.now()});
+   pick="";await refresh("Progress saved.")}}],
+history:["Attendance and lesson history",()=>{const now=Date.now();
+  const l=lessons.filter(x=>T(x)<now).reverse();
+  const n=s=>l.filter(x=>x.status===s).length;
+  return `<p><strong>${n("attended")}</strong> attended · <strong>${n("absent")}</strong> absent · <strong>${n("cancelled")}</strong> cancelled</p>`+
+  (l.length?l.map(x=>lessonRow(x,x.status==="booked"?btn("attended",x.id,"Attended",false)+btn("absent",x.id,"Absent"):"")).join(""):empty("No past lessons","Completed lessons will be listed here."))}]
+};
+async function refresh(msg){await load();show(cur);if(msg&&$("m")){$("m").className="msg ok";$("m").textContent=msg}}
+function show(k){cur=k;const [t,h,b]=PAGES[k];$("title").textContent=t;view.innerHTML=h();if(b)b();
+  $("side").querySelectorAll("button[data-k]").forEach(x=>x.setAttribute("aria-current",x.dataset.k===k))}
+view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const a=b.dataset.act,id=b.dataset.id;
+  if(a==="prev"||a==="next"){week.setDate(week.getDate()+(a==="next"?7:-7));return show("timetable")}
+  if(a==="today"){week=mon(new Date());return show("timetable")}
+  if(a==="prog"){pick=id;return show("progress")}
+  b.disabled=true;await updateDoc(doc(db,"lessons",id),{status:a});await refresh()};
+onAuthStateChanged(auth,async u=>{
+  if(!u)return location.href="auth.html";
+  uid=u.uid;const s=await getDoc(doc(db,"users",uid));me=s.exists()?s.data():{role:"student"};
+  if(me.role!=="teacher")return location.href=HOME[me.role]||HOME.student;
+  await load();
+  Object.entries(PAGES).forEach(([k,v])=>{const b=document.createElement("button");b.dataset.k=k;b.textContent=v[0];b.onclick=()=>show(k);$("side").appendChild(b)});
+  const o=document.createElement("button");o.className="out";o.textContent="Log out";o.onclick=()=>signOut(auth).then(()=>location.href="index.html");$("side").appendChild(o);
+  show("timetable");
+});
+</script></body></html>
