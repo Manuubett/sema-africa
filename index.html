@@ -167,31 +167,36 @@ footer.site{background:var(--deep);color:#C9DDE0;padding:36px 0;text-align:cente
   <div class="wrap">
     <h2>Courses and pricing</h2>
     <div class="toggle" role="group" aria-label="Currency">
-      <button data-cur="KES" aria-pressed="true">KES</button>
-      <button data-cur="USD" aria-pressed="false">USD</button>
+      <button data-cur="USD" aria-pressed="true">USD</button>
+      <button data-cur="KES" aria-pressed="false">KES</button>
     </div>
     <div class="grid">
       <article class="card plan">
-        <h3>Safari Starter</h3><p>Greetings, numbers, food and getting around.</p>
-        <div class="price" data-kes="2,500" data-usd="20">KES 2,500 <small>/ month</small></div>
-        <ul><li>Recorded beginner lessons</li><li>Notes and exercises</li><li>2 group classes a month</li></ul>
-        <a class="btn line" href="auth.html#register">Choose Starter</a>
-      </article>
-      <article class="card plan best">
-        <span class="tag">Most popular</span>
-        <h3>Everyday Conversation</h3><p>Past and future tenses, small talk, shopping, work.</p>
-        <div class="price" data-kes="6,000" data-usd="45">KES 6,000 <small>/ month</small></div>
-        <ul><li>Everything in Starter</li><li>4 live group classes</li><li>Progress tracking by your teacher</li></ul>
-        <a class="btn main" href="auth.html#register">Choose Conversation</a>
+        <h3>Trial lesson</h3><p>Meet your teacher and set your goals.</p>
+        <div class="price" data-kes="650" data-usd="5">$5 <small>/ 25 min</small></div>
+        <ul><li>One live lesson</li><li>A simple plan for what to learn next</li><li>No commitment</li></ul>
+        <a class="btn line" href="auth.html#register">Book a trial</a>
       </article>
       <article class="card plan">
-        <h3>One-to-One Intensive</h3><p>A personal plan with a teacher, built around your goals.</p>
-        <div class="price" data-kes="12,000" data-usd="90">KES 12,000 <small>/ month</small></div>
-        <ul><li>8 private lessons</li><li>Custom materials</li><li>Priority booking</li></ul>
-        <a class="btn line" href="auth.html#register">Choose Intensive</a>
+        <h3>Single lesson</h3><p>Pay as you go, whenever you need a lesson.</p>
+        <div class="price" data-kes="1500" data-usd="12">$12 <small>/ 45 min</small></div>
+        <ul><li>One live lesson</li><li>Recording and notes</li><li>Book any open slot</li></ul>
+        <a class="btn line" href="auth.html#register">Book a lesson</a>
+      </article>
+      <article class="card plan best">
+        <span class="tag">Most popular</span><h3>4 lessons a month</h3><p>One lesson a week. The steady way to progress.</p>
+        <div class="price" data-kes="5000" data-usd="40">$40 <small>/ month</small></div>
+        <ul><li>4 live lessons, 45 min each</li><li>Recordings, notes and exercises</li><li>Progress tracking</li><li>About $10 per lesson</li></ul>
+        <a class="btn main" href="auth.html#register">Choose 4 lessons</a>
+      </article>
+      <article class="card plan">
+        <h3>8 lessons a month</h3><p>Two lessons a week for faster progress.</p>
+        <div class="price" data-kes="9500" data-usd="75">$75 <small>/ month</small></div>
+        <ul><li>8 live lessons, 45 min each</li><li>Recordings, notes and exercises</li><li>Progress tracking</li><li>About $9.40 per lesson</li></ul>
+        <a class="btn line" href="auth.html#register">Choose 8 lessons</a>
       </article>
     </div>
-    <p class="note">Prices are placeholders. Edit them in the plan cards above, and later load them from Firestore.</p>
+    <p class="note">Launch pricing. Lessons are live online with your teacher. KES prices are rounded from the USD price.</p>
   </div>
 </section>
 
