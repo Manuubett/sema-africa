@@ -1,0 +1,47 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>My learning – SemaAfrica</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Nunito+Sans:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css"></head><body>
+<div class="kanga"></div>
+<div class="app">
+  <nav class="side" id="side" aria-label="Student menu">
+    <a class="logo" href="index.html">Sema<b>Africa</b></a>
+  </nav>
+  <main class="main"><h1 id="title">Karibu</h1><div id="view"></div></main>
+</div>
+<script type="module">
+import {auth,db,HOME} from "./js/firebase.js";
+import {onAuthStateChanged,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {doc,getDoc,collection,query,where,getDocs} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+const empty=(t,p,a)=>`<div class="empty"><strong>${t}</strong><p>${p}</p>${a?`<a class="btn" href="${a[1]}">${a[0]}</a>`:""}</div>`;
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let me,courses=[];
+const PAGES={
+ overview:["Overview",()=>`<p>Hujambo, ${esc(me.name)}! Here is where your learning lives.</p>`+
+   (courses.length?`<div class="row"><span>Enrolled courses</span><strong>${courses.length}</strong></div>`:empty("You are not enrolled yet","Choose a course to unlock live classes, recordings and notes.",["See courses","index.html#courses"]))],
+ courses:["My enrolled courses",()=>courses.length?courses.map(c=>`<div class="row"><span>${esc(c.courseName||c.courseId)}</span><span>${esc(c.status||"active")}</span></div>`).join(""):empty("No courses yet","Once you enrol, your courses appear here.",["Browse courses","index.html#courses"])],
+ book:["Book a lesson",()=>empty("Booking opens soon","Your teacher will publish time slots here. You will pick one and get a meeting link.")],
+ upcoming:["Upcoming classes",()=>empty("No classes scheduled","Booked lessons and their meeting links will show here.")],
+ progress:["Learning progress",()=>empty("Nothing recorded yet","After each lesson your teacher adds notes on how you are doing.")],
+ notes:["Notes and exercises",()=>empty("No materials yet","Downloads from your teacher will appear here.")],
+ recordings:["Recorded lessons",()=>empty("No recordings yet","Replay any class you have attended.")],
+ payments:["Payment history",()=>empty("No payments yet","Receipts for your subscriptions will be listed here.")]
+};
+const side=document.getElementById("side");
+function show(k){
+  document.getElementById("title").textContent=PAGES[k][0];
+  document.getElementById("view").innerHTML=PAGES[k][1]();
+  side.querySelectorAll("button[data-k]").forEach(b=>b.toggleAttribute("aria-current",b.dataset.k===k)||b.removeAttribute("aria-current"));
+  side.querySelectorAll("button[data-k]").forEach(b=>b.setAttribute("aria-current",b.dataset.k===k));
+}
+onAuthStateChanged(auth,async u=>{
+  if(!u)return location.href="auth.html";
+  const s=await getDoc(doc(db,"users",u.uid));
+  me=s.exists()?s.data():{name:u.displayName||"student",role:"student"};
+  if(me.role!=="student")return location.href=HOME[me.role];
+  try{courses=(await getDocs(query(collection(db,"enrollments"),where("userId","==",u.uid)))).docs.map(d=>d.data())}catch(e){courses=[]}
+  Object.entries(PAGES).forEach(([k,v])=>{const b=document.createElement("button");b.dataset.k=k;b.textContent=v[0];b.onclick=()=>show(k);side.appendChild(b)});
+  const o=document.createElement("button");o.className="out";o.textContent="Log out";o.onclick=()=>signOut(auth).then(()=>location.href="index.html");side.appendChild(o);
+  show("overview");
+});
+</script></body></html>
