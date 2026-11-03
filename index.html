@@ -115,7 +115,8 @@ footer.site{background:var(--deep);color:#C9DDE0;padding:36px 0;text-align:cente
         <li><a href="#courses">Courses &amp; pricing</a></li>
         <li><a href="#free">Free lesson</a></li>
         <li><a href="#stories">Students</a></li>
-        <li><a href="#register" class="btn main" style="padding:8px 18px;color:#fff">Register</a></li>
+        <li><a href="auth.html">Log in</a></li>
+        <li><a href="auth.html#register" class="btn main" style="padding:8px 18px;color:#fff">Register</a></li>
       </ul>
     </nav>
   </div>
@@ -174,20 +175,20 @@ footer.site{background:var(--deep);color:#C9DDE0;padding:36px 0;text-align:cente
         <h3>Safari Starter</h3><p>Greetings, numbers, food and getting around.</p>
         <div class="price" data-kes="2,500" data-usd="20">KES 2,500 <small>/ month</small></div>
         <ul><li>Recorded beginner lessons</li><li>Notes and exercises</li><li>2 group classes a month</li></ul>
-        <a class="btn line" href="#register">Choose Starter</a>
+        <a class="btn line" href="auth.html#register">Choose Starter</a>
       </article>
       <article class="card plan best">
         <span class="tag">Most popular</span>
         <h3>Everyday Conversation</h3><p>Past and future tenses, small talk, shopping, work.</p>
         <div class="price" data-kes="6,000" data-usd="45">KES 6,000 <small>/ month</small></div>
         <ul><li>Everything in Starter</li><li>4 live group classes</li><li>Progress tracking by your teacher</li></ul>
-        <a class="btn main" href="#register">Choose Conversation</a>
+        <a class="btn main" href="auth.html#register">Choose Conversation</a>
       </article>
       <article class="card plan">
         <h3>One-to-One Intensive</h3><p>A personal plan with a teacher, built around your goals.</p>
         <div class="price" data-kes="12,000" data-usd="90">KES 12,000 <small>/ month</small></div>
         <ul><li>8 private lessons</li><li>Custom materials</li><li>Priority booking</li></ul>
-        <a class="btn line" href="#register">Choose Intensive</a>
+        <a class="btn line" href="auth.html#register">Choose Intensive</a>
       </article>
     </div>
     <p class="note">Prices are placeholders. Edit them in the plan cards above, and later load them from Firestore.</p>
@@ -231,16 +232,7 @@ footer.site{background:var(--deep);color:#C9DDE0;padding:36px 0;text-align:cente
       <h2>Start learning Swahili</h2>
       <p>Create your account to book lessons, watch recordings and track your progress.</p>
     </div>
-    <form id="regForm" novalidate>
-      <label>Full name<input name="name" required autocomplete="name"></label>
-      <label>Email<input name="email" type="email" required autocomplete="email"></label>
-      <label>Password (6+ characters)<input name="pass" type="password" minlength="6" required autocomplete="new-password"></label>
-      <label>I want to learn as
-        <select name="goal"><option>A visitor</option><option>A resident</option><option>A serious learner</option></select>
-      </label>
-      <button class="btn main" type="submit">Create my account</button>
-      <p id="formMsg" aria-live="polite"></p>
-    </form>
+    <div class="cta" style="display:flex;gap:12px;flex-wrap:wrap"><a class="btn main" href="auth.html#register">Create my account</a><a class="btn line" href="auth.html">I already have an account</a></div>
   </div>
 </section>
 </main>
@@ -306,15 +298,6 @@ document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
 });
 render();
 
-// Registration: connect to Firebase Auth + Firestore here (next step)
-document.getElementById('regForm').onsubmit=e=>{
-  e.preventDefault();
-  const f=e.target,m=document.getElementById('formMsg');
-  if(!f.name.value.trim()||!f.email.validity.valid||f.pass.value.length<6){
-    m.textContent='Enter your name, a valid email and a password of 6 or more characters.';return;
-  }
-  m.textContent='Form works. Firebase sign-up will be connected in the next step.';
-};
 </script>
 </body>
 </html>
