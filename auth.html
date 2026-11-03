@@ -1,0 +1,74 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Log in – SemaAfrica</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Nunito+Sans:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css"></head><body>
+<div class="kanga"></div>
+<main class="auth">
+<a class="logo" href="index.html">Sema<b>Africa</b></a>
+<div class="card">
+  <div class="tabs" role="tablist">
+    <button role="tab" id="tLogin" aria-selected="true">Log in</button>
+    <button role="tab" id="tReg" aria-selected="false">Create account</button>
+  </div>
+  <form id="f" novalidate>
+    <label id="nameL" hidden>Full name<input id="name" autocomplete="name"></label>
+    <label>Email<input id="email" type="email" autocomplete="email" required></label>
+    <label>Password<input id="pass" type="password" minlength="6" autocomplete="current-password" required></label>
+    <label id="goalL" hidden>I want to learn as
+      <select id="goal"><option>A visitor</option><option>A resident</option><option>A serious learner</option></select></label>
+    <button class="btn" id="go" type="submit">Log in</button>
+    <p class="msg" id="msg" aria-live="polite"></p>
+    <a href="#" id="forgot">Forgot your password?</a>
+  </form>
+</div></main>
+<script type="module">
+import {auth,db,HOME} from "./js/firebase.js";
+import {createUserWithEmailAndPassword,signInWithEmailAndPassword,updateProfile,sendPasswordResetEmail}
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {doc,getDoc,setDoc,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+const $=id=>document.getElementById(id);
+let mode="login";
+function setMode(m){
+  mode=m;const reg=m==="register";
+  $("nameL").hidden=$("goalL").hidden=!reg;
+  $("tLogin").setAttribute("aria-selected",!reg);$("tReg").setAttribute("aria-selected",reg);
+  $("go").textContent=reg?"Create my account":"Log in";
+  $("pass").autocomplete=reg?"new-password":"current-password";
+  $("forgot").hidden=reg;$("msg").textContent="";
+}
+$("tLogin").onclick=()=>setMode("login");$("tReg").onclick=()=>setMode("register");
+if(location.hash==="#register")setMode("register");
+function say(t,ok){$("msg").textContent=t;$("msg").className="msg "+(ok?"ok":"err")}
+const ERR={"auth/invalid-credential":"Email or password is wrong.","auth/email-already-in-use":"That email already has an account. Log in instead.",
+ "auth/weak-password":"Use a password of 6 or more characters.","auth/invalid-email":"Enter a valid email address.","auth/too-many-requests":"Too many attempts. Wait a few minutes and try again.",
+ "auth/network-request-failed":"No connection. Check your internet and try again."};
+async function route(uid){
+  const s=await getDoc(doc(db,"users",uid));
+  location.href=HOME[s.exists()?s.data().role:"student"]||HOME.student;
+}
+$("f").onsubmit=async e=>{
+  e.preventDefault();
+  const email=$("email").value.trim(),pass=$("pass").value;
+  if(!email||pass.length<6)return say("Enter your email and a password of 6 or more characters.");
+  if(mode==="register"&&!$("name").value.trim())return say("Enter your full name.");
+  $("go").disabled=true;say("One moment…",true);
+  try{
+    if(mode==="register"){
+      const {user}=await createUserWithEmailAndPassword(auth,email,pass);
+      const name=$("name").value.trim();
+      await updateProfile(user,{displayName:name});
+      await setDoc(doc(db,"users",user.uid),{name,email,goal:$("goal").value,role:"student",createdAt:serverTimestamp()});
+      await route(user.uid);
+    }else{
+      const {user}=await signInWithEmailAndPassword(auth,email,pass);
+      await route(user.uid);
+    }
+  }catch(err){say(ERR[err.code]||"Something went wrong ("+err.code+").");$("go").disabled=false}
+};
+$("forgot").onclick=async e=>{
+  e.preventDefault();const email=$("email").value.trim();
+  if(!email)return say("Type your email above, then click this link again.");
+  try{await sendPasswordResetEmail(auth,email);say("Reset link sent. Check your inbox.",true)}
+  catch(err){say(ERR[err.code]||"Could not send the reset email.")}
+};
+</script></body></html>
