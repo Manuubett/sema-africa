@@ -29,8 +29,14 @@ console.log('Firebase project:', admin.app().options.projectId || '(from key fil
 if (process.env.PAYMENTS_MODE === 'live') require('./providers/daraja').assertConfigured();   // stop at start-up if a setting is missing
 
 const app = express();
-const allowed = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
-app.use(cors({ origin: (o, cb) => cb(null, !o || allowed.includes(o)) }));   // only your own sites
+const allowed = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
+  .map(s => { try { return new URL(s).origin; } catch { return s.replace(/\/+$/, ''); } });   // tolerates a trailing slash or a path
+console.log('Allowed origins:', allowed.join(', ') || '(NONE SET: add ALLOWED_ORIGINS in Render)');
+app.use(cors({ origin: (o, cb) => {                                        // only your own sites
+  const ok = !o || allowed.includes(o);
+  if (!ok) console.warn('[cors] blocked origin:', o);
+  cb(null, ok);
+} }));
 
 app.use(express.json({ limit: '100kb' }));
 
