@@ -2,12 +2,17 @@
 <title>My learning – SemaAfrica</title>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Nunito+Sans:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="app.css">
-<style>.g{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}.g h2{font-size:1.5rem;margin-top:4px}h3.sec{margin:24px 0 4px;font:700 1.2rem 'Bricolage Grotesque',sans-serif}</style></head><body>
+<style>.g{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}.g h2{font-size:1.5rem;margin-top:4px}h3.sec{margin:24px 0 4px;font:700 1.2rem 'Bricolage Grotesque',sans-serif}dialog{border:0;border-radius:18px;padding:24px;max-width:440px;width:calc(100% - 32px);background:var(--paper);color:var(--ink)}dialog::backdrop{background:rgba(0,0,0,.6)}
+dialog label{display:grid;gap:6px;font-weight:700}dialog input{width:100%}
+.cat{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}.course{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.course h3{font:700 1.25rem 'Bricolage Grotesque',sans-serif}.pr{font:800 1.7rem 'Bricolage Grotesque',sans-serif}.pr small{font:600 .85rem 'Nunito Sans',sans-serif;color:var(--muted)}.course .btn{margin-top:auto}
+</style></head><body>
 <div class="kanga"></div>
 <div class="app">
   <nav class="side" id="side" aria-label="Student menu"><a class="logo" href="index.html">Sema<b>Africa</b></a></nav>
   <main class="main wide"><h1 id="title">Karibu</h1><p class="msg" id="flash" aria-live="polite"></p><div id="view"><p>Loading…</p></div></main>
 </div>
+<dialog id="payDlg" aria-label="Pay for a course"><div id="payBody"></div></dialog>
 <script>
 (function(){
   function f(m){var v=document.getElementById("view"),t=document.getElementById("title");
@@ -19,6 +24,8 @@
 </script>
 <script type="module">
 import {auth,db,HOME,WORKER_URL} from "./js/firebase.js";
+import * as FB from "./js/firebase.js";
+const SERVER_URL=(FB.SERVER_URL||"").replace(/\/+$/,"");
 import {onAuthStateChanged,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {doc,getDoc,collection,query,where,getDocs,writeBatch} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 const $=id=>document.getElementById(id), view=$("view");
@@ -27,13 +34,13 @@ const dt=v=>v&&v.toDate?v.toDate():null;
 const fdt=v=>dt(v).toLocaleString([],{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
 const fd=v=>{const d=dt(v);return d?d.toLocaleDateString([],{day:"numeric",month:"short",year:"numeric"}):"–"};
 const money=(a,c)=>(c==="KES"?"KES ":"$")+Number(a||0).toLocaleString();
-const empty=(t,p,a)=>`<div class="empty"><strong>${t}</strong><p>${p}</p>${a?`<a class="btn" href="${a[1]}">${a[0]}</a>`:""}</div>`;
+const empty=(t,p,a)=>`<div class="empty"><strong>${t}</strong><p>${p}</p>${a?`<a class="btn" href="${a[1]}"${a[1].length>1&&a[1][0]==="#"?` data-go="${a[1].slice(1)}"`:""}>${a[0]}</a>`:""}</div>`;
 const flash=(t,ok=true)=>{$("flash").className="msg "+(ok?"ok":"err");$("flash").textContent=t};
-let uid,me,enr=[],mine=[],openSlots=[],prog=[],pays=[],mats=[],cur="overview";
+let uid,me,enr=[],mine=[],openSlots=[],prog=[],pays=[],mats=[],catalog=[],cur="overview";
 async function load(){
   const q=(c,f,v)=>getDocs(query(collection(db,c),where(f,"==",v))).then(s=>s.docs.map(d=>({id:d.id,...d.data()})));
-  const [e,m,o,p,y,m1,m2]=await Promise.all([q("enrollments","userId",uid),q("lessons","studentId",uid),q("lessons","status","open"),q("progress","studentId",uid),q("payments","userId",uid),q("materials","studentId",uid),q("materials","studentId","")]);
-  enr=e;mine=m;prog=p.sort((a,b)=>dt(b.date)-dt(a.date));pays=y.sort((a,b)=>dt(b.createdAt)-dt(a.createdAt));
+  const [e,m,o,p,y,m1,m2,cs]=await Promise.all([q("enrollments","userId",uid),q("lessons","studentId",uid),q("lessons","status","open"),q("progress","studentId",uid),q("payments","userId",uid),q("materials","studentId",uid),q("materials","studentId",""),getDocs(collection(db,"courses"))]);
+  enr=e;mine=m;catalog=cs.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.active!==false).sort((a,b)=>a.usd-b.usd);prog=p.sort((a,b)=>dt(b.date)-dt(a.date));pays=y.sort((a,b)=>dt(b.createdAt)-dt(a.createdAt));
   openSlots=o.filter(l=>dt(l.start)>new Date()).sort((a,b)=>dt(a.start)-dt(b.start));
   const seen={};mats=[...m1,...m2].filter(x=>!seen[x.id]&&(seen[x.id]=1)).sort((a,b)=>(dt(b.createdAt)||0)-(dt(a.createdAt)||0));
 }
@@ -48,10 +55,18 @@ overview:["Overview",()=>{const n=upcoming()[0],lv=prog[0];
   return `<p>Hujambo, ${esc(me.name)}! Here is where your learning stands.</p><div class="g" style="margin-top:14px">
   <div class="card"><small>Next class</small><h2>${n?fdt(n.start):"None booked"}</h2>${n?join(n):`<a href="#" data-go="book">Book a lesson</a>`}</div>
   <div class="card"><small>Lessons left</small><h2>${credits()}</h2></div>
-  <div class="card"><small>Your level</small><h2>${lv?esc(lv.level):"Not set yet"}</h2></div></div>`+(enr.length?"":empty("You are not enrolled yet","Choose a plan to unlock live classes, recordings and notes.",["See plans","index.html#courses"]))}],
-courses:["My enrolled courses",()=>enr.length?enr.map(e=>`<div class="row"><div><strong>${esc(e.courseName)}</strong> <span class="pill">${esc(e.status)}</span><small>${e.lessonsLeft} of ${e.lessonsTotal} lessons left · started ${fd(e.startDate)}${e.expiresAt?" · ends "+fd(e.expiresAt):""}</small></div></div>`).join(""):empty("No courses yet","Once you enrol, your courses appear here.",["Browse courses","index.html#courses"])],
+  <div class="card"><small>Your level</small><h2>${lv?esc(lv.level):"Not set yet"}</h2></div></div><p style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap"><a class="btn" href="#" data-go="browse">Browse courses</a><a class="btn line" href="#" data-go="book">Book a lesson</a></p>`+(enr.length?"":empty("You are not enrolled yet","Choose a plan to unlock live classes, recordings and notes.",["Browse courses","#browse"]))}],
+browse:["Browse courses",()=>{
+  if(!catalog.length)return empty("No courses are published yet","New courses will appear here. Check back soon.");
+  const own=id=>enr.some(e=>e.courseId===id&&e.status==="active"&&e.lessonsLeft>0&&(!e.expiresAt||dt(e.expiresAt)>new Date()));
+  return `<p>Pick a plan, pay with M-Pesa, then book your lessons right away.</p><div class="cat">${catalog.map(c=>`<article class="card course"><span class="pill">${esc(c.type)}</span><h3>${esc(c.name)}</h3>
+   <small>${c.lessons} lesson${c.lessons>1?"s":""} × ${c.minutes} min${c.type==="Monthly"?" · valid for 30 days":""}</small>
+   <div class="pr">KES ${Number(c.kes).toLocaleString()} <small>≈ $${c.usd}</small></div>${c.lessons>1?`<small>About $${(c.usd/c.lessons).toFixed(2)} per lesson</small>`:""}
+   ${own(c.id)?'<span class="pill">You have this plan</span>':""}<button class="btn" data-act="enrol" data-id="${c.id}">${own(c.id)?"Buy again":"Enrol with M-Pesa"}</button></article>`).join("")}</div>
+   <p><small>Paying from outside Kenya? Card payments are coming soon.</small></p>`}],
+courses:["My enrolled courses",()=>enr.length?enr.map(e=>`<div class="row"><div><strong>${esc(e.courseName)}</strong> <span class="pill">${esc(e.status)}</span><small>${e.lessonsLeft} of ${e.lessonsTotal} lessons left · started ${fd(e.startDate)}${e.expiresAt?" · ends "+fd(e.expiresAt):""}</small></div></div>`).join(""):empty("No courses yet","Once you enrol, your courses appear here.",["Browse courses","#browse"])],
 book:["Book a lesson",()=>{
-  if(!usable().length)return empty("You need an active plan to book","You have no lessons left. Choose a plan, or ask your teacher if you think this is a mistake.",["See plans","index.html#courses"]);
+  if(!usable().length)return empty("You need an active plan to book","You have no lessons left. Choose a plan, or ask your teacher if you think this is a mistake.",["Browse courses","#browse"]);
   return `<p>You have <strong>${credits()}</strong> lesson${credits()===1?"":"s"} left. Booking uses one.</p>`+(openSlots.length?openSlots.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"Your teacher")} · ${esc(l.type)} · ${l.duration} min</small></div><button class="btn sm" data-act="book" data-id="${l.id}">Book this time</button></div>`).join(""):empty("No open times right now","Your teacher has not published new times yet. Check back soon."))}],
 upcoming:["Upcoming classes",()=>{const u=upcoming(),past=mine.filter(l=>!u.includes(l)&&dt(l.start)<new Date()).sort((a,b)=>dt(b.start)-dt(a.start));
   return (u.length?u.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"")} · ${esc(l.type)} · ${l.duration} min</small></div>${join(l)}</div>`).join(""):empty("No classes scheduled","Book a time and it will show here with your meeting link.",["Book a lesson","#"]))+
@@ -64,6 +79,7 @@ recordings:["Recorded lessons",()=>{const l=mats.filter(m=>m.type==="Recording")
 payments:["Payment history",()=>pays.length?pays.map(p=>`<div class="row"><div><strong>${money(p.amount,p.currency)}</strong> · ${esc(p.courseName)}<small>${esc(p.method)} ${esc(p.reference||"")} · ${fd(p.createdAt)}</small></div></div>`).join(""):empty("No payments yet","Receipts for your plans will be listed here.")]
 };
 const ACT={
+ async enrol(b){b.disabled=false;openPay(catalog.find(c=>c.id===b.dataset.id))},
  async open(b){const w=window.open("","_blank");try{const r=await fetch(WORKER_URL+"/file/"+b.dataset.id,{headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});if(!r.ok)throw 0;w.location=URL.createObjectURL(await r.blob())}catch{w.close();flash("Could not open that file.",false)}b.disabled=false},
  async book(b){const l=openSlots.find(x=>x.id===b.dataset.id),e=usable()[0];if(!l||!e)return;if(!confirm("Book "+fdt(l.start)+"? This uses 1 lesson."))return;
   try{const w=writeBatch(db);
@@ -72,6 +88,55 @@ const ACT={
    await w.commit();await load();show("upcoming");flash("Booked! Your meeting link is below once your teacher adds it.")}
   catch(x){await load();show("book");flash("Sorry, that time was just taken or is no longer available. Please pick another.",false)}}
 };
+
+/* ── M-Pesa payment (server decides the price; the browser only shows it) ── */
+let payCourse=null,payId=null,payTimer=null,testMode=false,payAmt=0,payCode="";
+const kes=n=>"KES "+Number(n).toLocaleString(), dopen=()=>$("payDlg").open;
+async function api(path,method="GET",body){
+  const r=await fetch(SERVER_URL+"/api/payments"+path,{method,headers:{"Content-Type":"application/json",Authorization:"Bearer "+await auth.currentUser.getIdToken()},body:body?JSON.stringify(body):undefined});
+  const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||"Something went wrong");return d}
+function openPay(c){
+  if(!SERVER_URL){flash("Online payment is being set up. For now, please ask your teacher to enrol you.",false);return}
+  payCourse=c;payId=null;payAmt=c.kes;payCode="";drawPay("form");$("payDlg").showModal();
+  fetch(SERVER_URL+"/api/health").then(r=>r.json()).then(h=>{testMode=h.mode==="test"}).catch(()=>{});
+}
+const stopPay=()=>{clearInterval(payTimer);payTimer=null};
+function drawPay(step,x={}){
+  const c=payCourse,b=$("payBody"),close='<button class="btn line sm" data-p="close" type="button">Close</button>';
+  const head=`<h2 style="font-size:1.4rem">${esc(c.name)}</h2><p><small>${c.lessons} lesson${c.lessons>1?"s":""} × ${c.minutes} min</small></p>`;
+  if(step==="form")b.innerHTML=head+`<p style="font-size:1.7rem;font-weight:800;margin:6px 0" id="pp">${kes(payAmt)}</p>
+   <label>M-Pesa phone number<input id="pph" type="tel" inputmode="tel" autocomplete="tel" placeholder="07XX XXX XXX"></label>
+   <label style="margin-top:10px">Discount code (optional)<span style="display:flex;gap:8px"><input id="pcd" value="${esc(payCode)}"><button class="btn line sm" data-p="apply" type="button">Apply</button></span></label>
+   <p class="msg" id="pm" aria-live="polite"></p><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-p="pay" type="button">Pay with M-Pesa</button>${close}</div>`;
+  else if(step==="wait")b.innerHTML=head+`<p><strong>Check your phone.</strong> Enter your M-Pesa PIN to pay ${kes(payAmt)}.</p>
+   <p class="msg" id="pm" aria-live="polite">${x.late?"Still waiting. If you have paid, tap the button below. If not, close this and try again.":"Waiting for payment…"}</p>
+   <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" data-p="check" type="button">I have paid, check now</button>${testMode?'<button class="btn line" data-p="sim" type="button">Simulate payment (test mode)</button>':""}${close}</div>
+   <p><small>You can close this window. Your plan appears here as soon as the payment is confirmed.</small></p>`;
+  else if(step==="done")b.innerHTML=head+'<p><strong>You are enrolled. Karibu!</strong></p><p>Your lessons are ready to book.</p><button class="btn" data-p="book" type="button">Book my first lesson</button>';
+  else if(step==="fail")b.innerHTML=head+`<p class="msg err">${esc(x.reason||"The payment did not go through.")}</p><div style="display:flex;gap:8px"><button class="btn" data-p="retry" type="button">Try again</button>${close}</div>`;
+}
+function poll(){stopPay();let n=0;payTimer=setInterval(async()=>{
+  if(++n>45){stopPay();if(dopen())drawPay("wait",{late:true});return}
+  try{const s=await api("/status/"+payId);
+    if(s.status==="paid")await paid();
+    else if(["failed","amount_mismatch"].includes(s.status)){stopPay();dopen()?drawPay("fail",{reason:s.reason}):flash("The payment did not go through.",false)}
+  }catch{}},4000)}
+async function paid(){stopPay();await load();if(dopen())drawPay("done");else flash("Payment confirmed. You are enrolled!");if(cur!=="overview")show(cur);else show("overview")}
+$("payDlg").onclick=async e=>{const b=e.target.closest("[data-p]");if(!b)return;const a=b.dataset.p,m=()=>$("pm");
+  try{
+    if(a==="close")$("payDlg").close();
+    else if(a==="retry")drawPay("form");
+    else if(a==="book"){$("payDlg").close();show("book")}
+    else if(a==="apply"){payCode=$("pcd").value.trim();
+      if(!payCode){payAmt=payCourse.kes;$("pp").textContent=kes(payAmt);return}
+      const q=await api("/quote","POST",{courseId:payCourse.id,code:payCode});payAmt=q.amount;$("pp").textContent=kes(q.amount);
+      m().className="msg ok";m().textContent=q.discount?"Code applied: "+kes(q.discount)+" off.":"Code accepted."}
+    else if(a==="pay"){b.disabled=true;payCode=$("pcd").value.trim();
+      const d=await api("/initiate","POST",{courseId:payCourse.id,phone:$("pph").value,code:payCode});
+      payId=d.paymentId;payAmt=d.amount;drawPay("wait");poll()}
+    else if(a==="check"){const s=await api("/status/"+payId);if(s.status==="paid")await paid();else{m().className="msg";m().textContent="Not confirmed yet. M-Pesa can take up to a minute."}}
+    else if(a==="sim"){await api("/simulate/"+payId,"POST");await paid()}
+  }catch(err){const el=m();if(el){el.className="msg err";el.textContent=err.message}b.disabled=false}};
 function show(k){cur=k;const [t,h]=PAGES[k];$("title").textContent=t;view.innerHTML=h();
   $("side").querySelectorAll("button[data-k]").forEach(x=>x.setAttribute("aria-current",x.dataset.k===k))}
 view.onclick=async e=>{const g=e.target.closest("[data-go]");if(g){e.preventDefault();return show(g.dataset.go)}
