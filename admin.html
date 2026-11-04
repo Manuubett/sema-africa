@@ -8,8 +8,17 @@
 <div class="kanga"></div>
 <div class="app">
   <nav class="side" id="side" aria-label="Admin menu"><a class="logo" href="index.html">Sema<b>Africa</b></a></nav>
-  <main class="main wide"><h1 id="title"></h1><p class="msg" id="flash" aria-live="polite"></p><div id="view"></div></main>
+  <main class="main wide"><h1 id="title"></h1><p class="msg" id="flash" aria-live="polite"></p><div id="view"><p>Loading…</p></div></main>
 </div>
+<script>
+(function(){
+  function f(m){var v=document.getElementById("view"),t=document.getElementById("title");
+    if(t){t.textContent="Something went wrong";}
+    if(v){v.innerHTML='<div class="empty"><strong></strong><p>Take a screenshot of this message and send it to me. Usual causes: Firestore rules not published, the Firestore database not created, a missing file in the js folder, or wrong Firebase settings.</p></div>';v.querySelector("strong").textContent=m;}}
+  addEventListener("unhandledrejection",function(e){f(String(e.reason&&(e.reason.code||e.reason.message)||e.reason))});
+  addEventListener("error",function(e){f(e.message||"A script failed to load")});
+})();
+</script>
 <script type="module">
 import {auth,db,HOME} from "./js/firebase.js";
 import {onAuthStateChanged,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
