@@ -1,47 +1,81 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>My learning – SemaAfrica</title>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Nunito+Sans:wght@400;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="app.css"></head><body>
+<link rel="stylesheet" href="app.css">
+<style>.g{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}.g h2{font-size:1.5rem;margin-top:4px}h3.sec{margin:24px 0 4px;font:700 1.2rem 'Bricolage Grotesque',sans-serif}</style></head><body>
 <div class="kanga"></div>
 <div class="app">
-  <nav class="side" id="side" aria-label="Student menu">
-    <a class="logo" href="index.html">Sema<b>Africa</b></a>
-  </nav>
-  <main class="main"><h1 id="title">Karibu</h1><div id="view"></div></main>
+  <nav class="side" id="side" aria-label="Student menu"><a class="logo" href="index.html">Sema<b>Africa</b></a></nav>
+  <main class="main wide"><h1 id="title">Karibu</h1><p class="msg" id="flash" aria-live="polite"></p><div id="view"></div></main>
 </div>
 <script type="module">
-import {auth,db,HOME} from "./js/firebase.js";
+import {auth,db,HOME,WORKER_URL} from "./js/firebase.js";
 import {onAuthStateChanged,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {doc,getDoc,collection,query,where,getDocs} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {doc,getDoc,collection,query,where,getDocs,writeBatch} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+const $=id=>document.getElementById(id), view=$("view");
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const dt=v=>v&&v.toDate?v.toDate():null;
+const fdt=v=>dt(v).toLocaleString([],{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
+const fd=v=>{const d=dt(v);return d?d.toLocaleDateString([],{day:"numeric",month:"short",year:"numeric"}):"–"};
+const money=(a,c)=>(c==="KES"?"KES ":"$")+Number(a||0).toLocaleString();
 const empty=(t,p,a)=>`<div class="empty"><strong>${t}</strong><p>${p}</p>${a?`<a class="btn" href="${a[1]}">${a[0]}</a>`:""}</div>`;
-const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-let me,courses=[];
-const PAGES={
- overview:["Overview",()=>`<p>Hujambo, ${esc(me.name)}! Here is where your learning lives.</p>`+
-   (courses.length?`<div class="row"><span>Enrolled courses</span><strong>${courses.length}</strong></div>`:empty("You are not enrolled yet","Choose a course to unlock live classes, recordings and notes.",["See courses","index.html#courses"]))],
- courses:["My enrolled courses",()=>courses.length?courses.map(c=>`<div class="row"><span>${esc(c.courseName||c.courseId)}</span><span>${esc(c.status||"active")}</span></div>`).join(""):empty("No courses yet","Once you enrol, your courses appear here.",["Browse courses","index.html#courses"])],
- book:["Book a lesson",()=>empty("Booking opens soon","Your teacher will publish time slots here. You will pick one and get a meeting link.")],
- upcoming:["Upcoming classes",()=>empty("No classes scheduled","Booked lessons and their meeting links will show here.")],
- progress:["Learning progress",()=>empty("Nothing recorded yet","After each lesson your teacher adds notes on how you are doing.")],
- notes:["Notes and exercises",()=>empty("No materials yet","Downloads from your teacher will appear here.")],
- recordings:["Recorded lessons",()=>empty("No recordings yet","Replay any class you have attended.")],
- payments:["Payment history",()=>empty("No payments yet","Receipts for your subscriptions will be listed here.")]
-};
-const side=document.getElementById("side");
-function show(k){
-  document.getElementById("title").textContent=PAGES[k][0];
-  document.getElementById("view").innerHTML=PAGES[k][1]();
-  side.querySelectorAll("button[data-k]").forEach(b=>b.toggleAttribute("aria-current",b.dataset.k===k)||b.removeAttribute("aria-current"));
-  side.querySelectorAll("button[data-k]").forEach(b=>b.setAttribute("aria-current",b.dataset.k===k));
+const flash=(t,ok=true)=>{$("flash").className="msg "+(ok?"ok":"err");$("flash").textContent=t};
+let uid,me,enr=[],mine=[],openSlots=[],prog=[],pays=[],mats=[],cur="overview";
+async function load(){
+  const q=(c,f,v)=>getDocs(query(collection(db,c),where(f,"==",v))).then(s=>s.docs.map(d=>({id:d.id,...d.data()})));
+  const [e,m,o,p,y,m1,m2]=await Promise.all([q("enrollments","userId",uid),q("lessons","studentId",uid),q("lessons","status","open"),q("progress","studentId",uid),q("payments","userId",uid),q("materials","studentId",uid),q("materials","studentId","")]);
+  enr=e;mine=m;prog=p.sort((a,b)=>dt(b.date)-dt(a.date));pays=y.sort((a,b)=>dt(b.createdAt)-dt(a.createdAt));
+  openSlots=o.filter(l=>dt(l.start)>new Date()).sort((a,b)=>dt(a.start)-dt(b.start));
+  const seen={};mats=[...m1,...m2].filter(x=>!seen[x.id]&&(seen[x.id]=1)).sort((a,b)=>(dt(b.createdAt)||0)-(dt(a.createdAt)||0));
 }
+const usable=()=>enr.filter(e=>e.status==="active"&&e.lessonsLeft>0&&(!e.expiresAt||dt(e.expiresAt)>new Date()));
+const credits=()=>usable().reduce((a,e)=>a+e.lessonsLeft,0);
+const upcoming=()=>mine.filter(l=>l.status==="booked"&&dt(l.start).getTime()>Date.now()-45*60000).sort((a,b)=>dt(a.start)-dt(b.start));
+const join=l=>l.meetLink?`<a class="btn sm" href="${esc(l.meetLink)}" target="_blank" rel="noopener">Join class</a>`:"<small>Link coming soon</small>";
+const matRow=m=>`<div class="row"><div><strong>${esc(m.title)}</strong> <span class="pill">${esc(m.type||"Notes")}</span> <span class="pill">${esc(m.level||"All levels")}</span><small>Added ${fd(m.createdAt)}</small></div>
+  ${m.link?`<a class="btn line sm" href="${esc(m.link)}" target="_blank" rel="noopener">Watch</a>`:`<button class="btn line sm" data-act="open" data-id="${m.id}">Open</button>`}</div>`;
+const PAGES={
+overview:["Overview",()=>{const n=upcoming()[0],lv=prog[0];
+  return `<p>Hujambo, ${esc(me.name)}! Here is where your learning stands.</p><div class="g" style="margin-top:14px">
+  <div class="card"><small>Next class</small><h2>${n?fdt(n.start):"None booked"}</h2>${n?join(n):`<a href="#" data-go="book">Book a lesson</a>`}</div>
+  <div class="card"><small>Lessons left</small><h2>${credits()}</h2></div>
+  <div class="card"><small>Your level</small><h2>${lv?esc(lv.level):"Not set yet"}</h2></div></div>`+(enr.length?"":empty("You are not enrolled yet","Choose a plan to unlock live classes, recordings and notes.",["See plans","index.html#courses"]))}],
+courses:["My enrolled courses",()=>enr.length?enr.map(e=>`<div class="row"><div><strong>${esc(e.courseName)}</strong> <span class="pill">${esc(e.status)}</span><small>${e.lessonsLeft} of ${e.lessonsTotal} lessons left · started ${fd(e.startDate)}${e.expiresAt?" · ends "+fd(e.expiresAt):""}</small></div></div>`).join(""):empty("No courses yet","Once you enrol, your courses appear here.",["Browse courses","index.html#courses"])],
+book:["Book a lesson",()=>{
+  if(!usable().length)return empty("You need an active plan to book","You have no lessons left. Choose a plan, or ask your teacher if you think this is a mistake.",["See plans","index.html#courses"]);
+  return `<p>You have <strong>${credits()}</strong> lesson${credits()===1?"":"s"} left. Booking uses one.</p>`+(openSlots.length?openSlots.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"Your teacher")} · ${esc(l.type)} · ${l.duration} min</small></div><button class="btn sm" data-act="book" data-id="${l.id}">Book this time</button></div>`).join(""):empty("No open times right now","Your teacher has not published new times yet. Check back soon."))}],
+upcoming:["Upcoming classes",()=>{const u=upcoming(),past=mine.filter(l=>!u.includes(l)&&dt(l.start)<new Date()).sort((a,b)=>dt(b.start)-dt(a.start));
+  return (u.length?u.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"")} · ${esc(l.type)} · ${l.duration} min</small></div>${join(l)}</div>`).join(""):empty("No classes scheduled","Book a time and it will show here with your meeting link.",["Book a lesson","#"]))+
+  `<h3 class="sec">Past classes</h3>`+(past.length?past.slice(0,30).map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong> <span class="pill">${esc(l.status)}</span><small>${esc(l.type)}</small></div></div>`).join(""):"<p><small>Nothing yet.</small></p>")}],
+progress:["Learning progress",()=>{const att=mine.filter(l=>l.status==="attended").length;
+  return `<div class="g"><div class="card"><small>Current level</small><h2>${prog[0]?esc(prog[0].level):"–"}</h2></div><div class="card"><small>Classes attended</small><h2>${att}</h2></div></div><h3 class="sec">Teacher notes</h3>`+
+  (prog.length?prog.map(p=>`<div class="row"><div><strong>${esc(p.topic)}</strong> <span class="pill">${esc(p.level)}</span><small>${fd(p.date)}${p.notes?" · "+esc(p.notes):""}</small></div></div>`).join(""):empty("Nothing recorded yet","After each lesson your teacher adds notes on how you are doing."))}],
+notes:["Notes and exercises",()=>{const l=mats.filter(m=>m.type!=="Recording");return l.length?l.map(matRow).join(""):empty("No materials yet","Downloads from your teacher will appear here.")}],
+recordings:["Recorded lessons",()=>{const l=mats.filter(m=>m.type==="Recording");return l.length?l.map(matRow).join(""):empty("No recordings yet","Replay links for your classes will appear here.")}],
+payments:["Payment history",()=>pays.length?pays.map(p=>`<div class="row"><div><strong>${money(p.amount,p.currency)}</strong> · ${esc(p.courseName)}<small>${esc(p.method)} ${esc(p.reference||"")} · ${fd(p.createdAt)}</small></div></div>`).join(""):empty("No payments yet","Receipts for your plans will be listed here.")]
+};
+const ACT={
+ async open(b){const w=window.open("","_blank");try{const r=await fetch(WORKER_URL+"/file/"+b.dataset.id,{headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});if(!r.ok)throw 0;w.location=URL.createObjectURL(await r.blob())}catch{w.close();flash("Could not open that file.",false)}b.disabled=false},
+ async book(b){const l=openSlots.find(x=>x.id===b.dataset.id),e=usable()[0];if(!l||!e)return;if(!confirm("Book "+fdt(l.start)+"? This uses 1 lesson."))return;
+  try{const w=writeBatch(db);
+   w.update(doc(db,"lessons",l.id),{status:"booked",studentId:uid,studentName:me.name,enrollmentId:e.id});
+   w.update(doc(db,"enrollments",e.id),{lessonsLeft:e.lessonsLeft-1});
+   await w.commit();await load();show("upcoming");flash("Booked! Your meeting link is below once your teacher adds it.")}
+  catch(x){await load();show("book");flash("Sorry, that time was just taken or is no longer available. Please pick another.",false)}}
+};
+function show(k){cur=k;const [t,h]=PAGES[k];$("title").textContent=t;view.innerHTML=h();
+  $("side").querySelectorAll("button[data-k]").forEach(x=>x.setAttribute("aria-current",x.dataset.k===k))}
+view.onclick=async e=>{const g=e.target.closest("[data-go]");if(g){e.preventDefault();return show(g.dataset.go)}
+  const a=e.target.closest("a[href='#']");if(a){e.preventDefault();return show("book")}
+  const b=e.target.closest("[data-act]");if(!b)return;b.disabled=true;try{await ACT[b.dataset.act](b)}catch(x){flash("That did not work.",false);b.disabled=false}};
 onAuthStateChanged(auth,async u=>{
   if(!u)return location.href="auth.html";
-  const s=await getDoc(doc(db,"users",u.uid));
+  uid=u.uid;const s=await getDoc(doc(db,"users",uid));
   me=s.exists()?s.data():{name:u.displayName||"student",role:"student"};
-  if(me.role!=="student")return location.href=HOME[me.role];
-  try{courses=(await getDocs(query(collection(db,"enrollments"),where("userId","==",u.uid)))).docs.map(d=>d.data())}catch(e){courses=[]}
-  Object.entries(PAGES).forEach(([k,v])=>{const b=document.createElement("button");b.dataset.k=k;b.textContent=v[0];b.onclick=()=>show(k);side.appendChild(b)});
-  const o=document.createElement("button");o.className="out";o.textContent="Log out";o.onclick=()=>signOut(auth).then(()=>location.href="index.html");side.appendChild(o);
+  if(me.role!=="student")return location.href=HOME[me.role]||HOME.student;
+  try{await load()}catch(e){flash("Could not load your data. Check your connection and refresh.",false)}
+  Object.entries(PAGES).forEach(([k,v])=>{const b=document.createElement("button");b.dataset.k=k;b.textContent=v[0];b.onclick=()=>{flash("");show(k)};$("side").appendChild(b)});
+  const o=document.createElement("button");o.className="out";o.textContent="Log out";o.onclick=()=>signOut(auth).then(()=>location.href="index.html");$("side").appendChild(o);
   show("overview");
 });
 </script></body></html>
