@@ -8,10 +8,9 @@
   <main class="main wide"><h1 id="title"></h1><div id="view"></div></main>
 </div>
 <script type="module">
-import {auth,db,storage,HOME} from "./js/firebase.js";
+import {auth,db,HOME,WORKER_URL} from "./js/firebase.js";
 import {onAuthStateChanged,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {doc,getDoc,collection,query,where,getDocs,addDoc,updateDoc,Timestamp,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-import {ref,uploadBytes,getDownloadURL} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 const $=id=>document.getElementById(id), view=$("view");
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const T=l=>l.start.toDate(), fd=d=>d.toLocaleDateString([],{weekday:"short",day:"numeric",month:"short"}), ft=d=>d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
@@ -33,6 +32,11 @@ const lessonRow=(l,acts="")=>`<div class="row"><div><strong>${fd(T(l))}, ${ft(T(
   <small>${esc(l.studentName||"No student yet")} · ${esc(l.type)} · ${l.duration} min</small></div><div class="acts">${l.meetLink?`<a class="btn line sm" href="${esc(l.meetLink)}" target="_blank" rel="noopener">Join</a>`:""}${acts}</div></div>`;
 const btn=(a,id,t,line=true)=>`<button class="btn sm ${line?"line":""}" data-act="${a}" data-id="${id}">${t}</button>`;
 
+let qu=[];
+const TYPES=["Notes","Exercise","Audio","Recording","Other"],LEVELS=["All levels","A1 Beginner","A2 Elementary","B1 Intermediate","B2 Upper intermediate"];
+const sel=(arr,v,i,k)=>`<select data-i="${i}" data-k="${k}">${arr.map(a=>`<option ${a===v?"selected":""}>${a}</option>`).join("")}</select>`;
+function drawQ(){const q=$("qL");if(!q)return;q.innerHTML=qu.map((x,i)=>`<div class="row" style="display:grid;gap:8px"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><small>${esc(x.f.name)} · ${x.st==="uploading"?"Uploading…":x.st==="error"?"Failed: "+esc(x.err):"Ready"}</small><button class="btn line sm" data-rm="${i}" type="button">Remove</button></div>
+ <div class="form" style="margin:0;padding:0"><label>Title<input data-i="${i}" data-k="title" value="${esc(x.title)}"></label><label>Type${sel(TYPES,x.type,i,"type")}</label><label>Level${sel(LEVELS,x.level,i,"level")}</label><label>Free for everyone<input type="checkbox" data-i="${i}" data-k="free" ${x.free?"checked":""}></label></div></div>`).join("")}
 const PAGES={
 students:["Student list",()=>{
   const att=id=>lessons.filter(l=>l.studentId===id&&l.status==="attended").length;
@@ -56,13 +60,27 @@ timetable:["Weekly timetable",()=>{
 upcoming:["Upcoming lessons",()=>{const now=Date.now();
   const l=lessons.filter(x=>T(x)>=now&&["open","booked"].includes(x.status));
   return l.length?l.map(x=>lessonRow(x,btn("cancelled",x.id,"Cancel"))).join(""):empty("No upcoming lessons","Add slots in Weekly timetable.")}],
-materials:["Learning materials",()=>`<form class="form" id="matF"><label>Title<input id="mt" required></label><label>File (PDF, audio, image)<input type="file" id="mf" required></label>
-  <label>For student<select id="ms"><option value="">All my students</option>${opts()}</select></label><button class="btn">Upload</button><p class="msg full" id="m"></p></form>`+
-  (mats.length?mats.map(m=>`<div class="row"><div><strong>${esc(m.title)}</strong><small>${m.studentName?esc(m.studentName):"All my students"}</small></div><a class="btn line sm" href="${esc(m.url)}" target="_blank" rel="noopener">Open</a></div>`).join(""):empty("Nothing uploaded","Notes and exercises you upload show up for your students.")),
- ()=>{$("matF").onsubmit=async e=>{e.preventDefault();const f=$("mf").files[0];if(!f)return;$("m").textContent="Uploading…";
-   try{const r=ref(storage,`materials/${uid}/${Date.now()}-${f.name.replace(/[^\w.-]/g,"_")}`);await uploadBytes(r,f);const s=$("ms").value;
-   await addDoc(collection(db,"materials"),{teacherId:uid,title:$("mt").value.trim(),url:await getDownloadURL(r),studentId:s,studentName:nameOf(s),createdAt:serverTimestamp()});
-   await refresh("Uploaded.")}catch(x){$("m").className="msg err";$("m").textContent="Upload failed: "+x.code}}}],
+materials:["Learning materials",()=>`<div class="form"><label class="full" style="border:2px dashed #0005;border-radius:12px;padding:22px;text-align:center;cursor:pointer">Drop files here or click to choose (PDF, Word, audio, images; up to 25 MB each)<input type="file" id="mf" multiple hidden></label>
+  <label>Share with<select id="ms"><option value="">All my students</option>${opts()}</select></label>
+  <button class="btn" id="upAll" type="button">Upload all</button><p class="msg full" id="m"></p></div><div id="qL"></div>
+  <h2 style="margin:22px 0 4px;font-size:1.3rem">Uploaded</h2>`+
+  (mats.length?mats.map(m=>`<div class="row"><div><strong>${esc(m.title)}</strong> <span class="pill">${esc(m.type||"Notes")}</span> <span class="pill">${esc(m.level||"All levels")}</span>${m.free?' <span class="pill">Free</span>':""}<small>${m.studentName?esc(m.studentName):"All my students"}</small></div>${btn("open",m.id,"Open")}</div>`).join(""):empty("Nothing uploaded","Notes and exercises you upload show up for your students.")),
+ ()=>{drawQ();
+  $("mf").onchange=e=>{[...e.target.files].forEach(f=>{if(f.size>25*1048576){$("m").className="msg err";$("m").textContent=f.name+" is over 25 MB and was skipped.";return}
+    qu.push({f,title:f.name.replace(/\.[^.]+$/,"").replace(/[_-]+/g," "),type:"Notes",level:"All levels",free:false,st:"ready"})});e.target.value="";drawQ()};
+  $("qL").oninput=e=>{const t=e.target,i=t.dataset.i;if(i!==undefined)qu[i][t.dataset.k]=t.type==="checkbox"?t.checked:t.value};
+  $("qL").onclick=e=>{const b=e.target.closest("[data-rm]");if(b){qu.splice(+b.dataset.rm,1);drawQ()}};
+  $("upAll").onclick=async()=>{const todo=qu.filter(x=>x.st!=="done");if(!todo.length)return;$("upAll").disabled=true;const s=$("ms").value;
+   for(const x of todo){x.st="uploading";drawQ();
+    try{const tok=await auth.currentUser.getIdToken();
+     const up=await fetch(WORKER_URL+"/upload",{method:"PUT",headers:{Authorization:"Bearer "+tok,"X-File-Name":encodeURIComponent(x.f.name),"Content-Type":x.f.type||"application/octet-stream"},body:x.f});
+     if(!up.ok)throw new Error((await up.json().catch(()=>({}))).error||up.status);
+     const {key}=await up.json();
+     await addDoc(collection(db,"materials"),{teacherId:uid,title:x.title.trim()||x.f.name,type:x.type,level:x.level,free:x.free,fileKey:key,fileName:x.f.name,studentId:s,studentName:nameOf(s),createdAt:serverTimestamp()});
+     x.st="done"}catch(err){x.st="error";x.err=err.message}
+    drawQ()}
+   const ok=qu.filter(x=>x.st==="done").length;qu=qu.filter(x=>x.st!=="done");
+   await load();show("materials");$("m").className="msg ok";$("m").textContent=ok+" uploaded"+(qu.length?", "+qu.length+" failed. Fix and try again.":".")}}],
 progress:["Student progress",()=>`<form class="form" id="pF"><label>Student<select id="ps" required><option value="">Choose…</option>${opts(pick)}</select></label>
   <label>Level<select id="pl"><option>Beginner (A1)</option><option>Elementary (A2)</option><option>Intermediate (B1)</option><option>Upper intermediate (B2)</option></select></label>
   <label class="full">Topic covered<input id="pt" required></label><label class="full">Notes (strengths, what to practise)<textarea id="pn"></textarea></label>
@@ -84,6 +102,7 @@ view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const
   if(a==="prev"||a==="next"){week.setDate(week.getDate()+(a==="next"?7:-7));return show("timetable")}
   if(a==="today"){week=mon(new Date());return show("timetable")}
   if(a==="prog"){pick=id;return show("progress")}
+  if(a==="open"){const w=window.open("","_blank");try{const r=await fetch(WORKER_URL+"/file/"+id,{headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});if(!r.ok)throw 0;w.location=URL.createObjectURL(await r.blob())}catch{w.close();alert("Could not open the file.")}return}
   b.disabled=true;await updateDoc(doc(db,"lessons",id),{status:a});await refresh()};
 onAuthStateChanged(auth,async u=>{
   if(!u)return location.href="auth.html";
