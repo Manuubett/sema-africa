@@ -1,0 +1,137 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin – SemaAfrica</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Nunito+Sans:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css">
+<style>.g{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}.g h2{font-size:1.6rem;margin-top:4px}
+.bars{display:flex;gap:10px;align-items:flex-end;height:190px;background:var(--paper);border-radius:14px;padding:16px}.bars>div{flex:1;text-align:center;display:flex;flex-direction:column;justify-content:flex-end;height:100%}
+.bars i{display:block;background:var(--sea);border-radius:6px 6px 0 0;min-height:2px}.bars small{font-size:.75rem}h3.sec{margin:26px 0 4px;font:700 1.25rem 'Bricolage Grotesque',sans-serif}</style></head><body>
+<div class="kanga"></div>
+<div class="app">
+  <nav class="side" id="side" aria-label="Admin menu"><a class="logo" href="index.html">Sema<b>Africa</b></a></nav>
+  <main class="main wide"><h1 id="title"></h1><p class="msg" id="flash" aria-live="polite"></p><div id="view"></div></main>
+</div>
+<script type="module">
+import {auth,db,HOME} from "./js/firebase.js";
+import {onAuthStateChanged,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {doc,getDoc,collection,getDocs,addDoc,setDoc,updateDoc,deleteDoc,writeBatch,Timestamp,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+const $=id=>document.getElementById(id), view=$("view");
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const dt=v=>v&&v.toDate?v.toDate():null, fd=v=>{const d=dt(v);return d?d.toLocaleDateString([],{day:"numeric",month:"short",year:"numeric"}):"–"};
+const money=(a,c)=>(c==="KES"?"KES ":"$")+Number(a||0).toLocaleString();
+const empty=(t,p)=>`<div class="empty"><strong>${t}</strong><p>${p}</p></div>`;
+const bt=(a,id,t,line=true,x="")=>`<button class="btn sm ${line?"line":""}" data-act="${a}" data-id="${id}" ${x}>${t}</button>`;
+let uid,users=[],courses=[],enr=[],pays=[],lessons=[],codes=[],cur="overview",editC="",repCur="USD";
+const students=()=>users.filter(u=>u.role==="student");
+function flash(t,ok=true){$("flash").className="msg "+(ok?"ok":"err");$("flash").textContent=t}
+async function load(){
+  const all=c=>getDocs(collection(db,c)).then(s=>s.docs.map(d=>({id:d.id,...d.data()})));
+  [users,courses,enr,pays,lessons,codes]=await Promise.all(["users","courses","enrollments","payments","lessons","discountCodes"].map(all));
+}
+async function refresh(m){await load();show(cur);if(m)flash(m)}
+
+const PAGES={
+overview:["Overview",()=>{
+  const now=new Date(),mk=d=>d.getFullYear()+"-"+d.getMonth();
+  const mp=pays.filter(p=>dt(p.createdAt)&&mk(dt(p.createdAt))===mk(now));
+  const rev=["USD","KES"].map(c=>money(mp.filter(p=>p.currency===c).reduce((a,p)=>a+ +p.amount,0),c)).join(" + ");
+  const up=lessons.filter(l=>["open","booked"].includes(l.status)&&dt(l.start)>now).length;
+  return `<div class="g">${[["Students",students().length],["Teachers",users.filter(u=>u.role==="teacher").length],["Active enrolments",enr.filter(e=>e.status==="active").length],["Upcoming lessons",up],["Revenue this month",rev]].map(([a,b])=>`<div class="card"><small>${a}</small><h2>${b}</h2></div>`).join("")}</div>`}],
+
+users:["Students and teachers",()=>`<div class="form"><label>Search<input id="q" placeholder="Name or email"></label><label>Show<select id="rf"><option value="">Everyone</option><option value="student">Students</option><option value="teacher">Teachers</option><option value="admin">Admins</option></select></label></div><div id="ul"></div>`,
+ ()=>{const rb=(id,r,t)=>`<button class="btn sm line" data-act="role" data-id="${id}" data-r="${r}">${t}</button>`;
+  const draw=()=>{const q=$("q").value.toLowerCase(),f=$("rf").value;
+   const l=users.filter(u=>(!f||u.role===f)&&((u.name||"")+(u.email||"")).toLowerCase().includes(q));
+   $("ul").innerHTML=l.length?l.map(u=>`<div class="row"><div><strong>${esc(u.name)}</strong> <span class="pill">${esc(u.role)}</span><small>${esc(u.email)} · ${esc(u.goal||"")} · joined ${fd(u.createdAt)}</small></div>
+    <div class="acts">${u.id===uid?"<small>You</small>":u.role==="student"?rb(u.id,"teacher","Make teacher"):u.role==="teacher"?rb(u.id,"student","Make student"):""}</div></div>`).join(""):empty("No one found","Try another search.")};
+  $("q").oninput=draw;$("rf").onchange=draw;draw()}],
+
+courses:["Courses and pricing",()=>{const c=courses.find(x=>x.id===editC)||{};
+  return `<form class="form" id="cF"><label>Name<input id="cn" required value="${esc(c.name)}"></label>
+  <label>Type<select id="ct">${["Trial","Single","Monthly"].map(t=>`<option ${c.type===t?"selected":""}>${t}</option>`).join("")}</select></label>
+  <label>Lessons included<input id="cl" type="number" min="1" value="${c.lessons||1}"></label>
+  <label>Minutes each<select id="cm"><option ${c.minutes==25?"selected":""}>25</option><option ${c.minutes==25?"":"selected"}>45</option></select></label>
+  <label>Price USD<input id="cu" type="number" min="0" step="0.01" required value="${c.usd??""}"></label>
+  <label>Price KES<input id="ck" type="number" min="0" required value="${c.kes??""}"></label>
+  <button class="btn">${editC?"Save changes":"Add course"}</button>${editC?bt("canc","","Cancel edit"):""}</form>`+
+  (courses.length?courses.map(c=>`<div class="row"><div><strong>${esc(c.name)}</strong> <span class="pill">${esc(c.type)}</span> ${c.active===false?'<span class="pill">Hidden</span>':""}<small>${c.lessons} × ${c.minutes} min · $${c.usd} / KES ${Number(c.kes).toLocaleString()}</small></div>
+   <div class="acts">${bt("editc",c.id,"Edit")}${bt("togc",c.id,c.active===false?"Show":"Hide")}${bt("delc",c.id,"Delete")}</div></div>`).join(""):empty("No courses yet","Add your first course, or load the four launch plans.")+bt("seed","","Add the four launch plans",false))},
+ ()=>{$("cF").onsubmit=async e=>{e.preventDefault();
+   const d={name:$("cn").value.trim(),type:$("ct").value,lessons:+$("cl").value,minutes:+$("cm").value,usd:+$("cu").value,kes:+$("ck").value};
+   if(editC){await updateDoc(doc(db,"courses",editC),d)}else{await addDoc(collection(db,"courses"),{...d,active:true,createdAt:serverTimestamp()})}
+   editC="";await refresh("Course saved. Prices update here only; the public page still shows fixed prices.")}}],
+
+pay:["Subscriptions and payments",()=>{
+  const ac=courses.filter(c=>c.active!==false);
+  return `<form class="form" id="pF"><label class="full"><strong>Enrol a student and record their payment</strong></label>
+  <label>Student<select id="ps" required><option value="">Choose…</option>${students().map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select></label>
+  <label>Course<select id="pc" required><option value="">Choose…</option>${ac.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select></label>
+  <label>Currency<select id="pu"><option>USD</option><option>KES</option></select></label>
+  <label>Amount paid<input id="pa" type="number" min="0" step="0.01" required></label>
+  <label>Method<select id="pm"><option>M-Pesa</option><option>Card</option><option>Cash</option><option>Bank transfer</option></select></label>
+  <label>Reference<input id="pr" placeholder="M-Pesa code, receipt no."></label><button class="btn">Enrol and record payment</button></form>
+  <h3 class="sec">Enrolments</h3>`+(enr.length?[...enr].sort((a,b)=>(dt(b.startDate)||0)-(dt(a.startDate)||0)).map(e=>`<div class="row"><div><strong>${esc(e.userName)}</strong> <span class="pill">${esc(e.status)}</span><small>${esc(e.courseName)} · started ${fd(e.startDate)}${e.expiresAt?" · ends "+fd(e.expiresAt):""} · ${e.lessonsLeft} of ${e.lessonsTotal} lessons left</small></div>
+   <div class="acts">${e.status==="active"?bt("enst",e.id,"Mark expired",true,'data-s="expired"')+bt("enst",e.id,"Cancel",true,'data-s="cancelled"'):bt("enst",e.id,"Reactivate",true,'data-s="active"')}</div></div>`).join(""):empty("No enrolments yet","Enrol your first student above."))+
+  `<h3 class="sec">Payments</h3>`+(pays.length?[...pays].sort((a,b)=>(dt(b.createdAt)||0)-(dt(a.createdAt)||0)).slice(0,30).map(p=>`<div class="row"><div><strong>${money(p.amount,p.currency)}</strong> · ${esc(p.userName)}<small>${esc(p.courseName)} · ${esc(p.method)} ${esc(p.reference||"")} · ${fd(p.createdAt)}</small></div></div>`).join(""):empty("No payments yet","Recorded payments appear here."))},
+ ()=>{const fill=()=>{const c=courses.find(x=>x.id===$("pc").value);$("pa").value=c?($("pu").value==="USD"?c.usd:c.kes):""};
+  $("pc").onchange=$("pu").onchange=fill;
+  $("pF").onsubmit=async e=>{e.preventDefault();const s=users.find(u=>u.id===$("ps").value),c=courses.find(x=>x.id===$("pc").value);if(!s||!c)return;
+   const now=new Date(),end=new Date(now);end.setDate(end.getDate()+30),b=writeBatch(db);
+   b.set(doc(collection(db,"enrollments")),{userId:s.id,userName:s.name,courseId:c.id,courseName:c.name,type:c.type,lessonsTotal:c.lessons,lessonsLeft:c.lessons,status:"active",startDate:Timestamp.fromDate(now),expiresAt:c.type==="Monthly"?Timestamp.fromDate(end):null});
+   b.set(doc(collection(db,"payments")),{userId:s.id,userName:s.name,courseId:c.id,courseName:c.name,amount:+$("pa").value,currency:$("pu").value,method:$("pm").value,reference:$("pr").value.trim(),createdAt:serverTimestamp()});
+   await b.commit();await refresh(s.name+" is enrolled and the payment is recorded.")}}],
+
+bookings:["Bookings",()=>`<div class="form"><label>Show<select id="bf"><option value="">All</option><option value="open">Open slots</option><option value="booked">Booked</option><option value="attended">Attended</option><option value="absent">Absent</option><option value="cancelled">Cancelled</option></select></label></div><div id="bl"></div>`,
+ ()=>{const draw=()=>{const f=$("bf").value,l=lessons.filter(x=>!f||x.status===f).sort((a,b)=>dt(b.start)-dt(a.start)).slice(0,100);
+   $("bl").innerHTML=l.length?l.map(x=>`<div class="row"><div><strong>${dt(x.start).toLocaleString([],{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</strong> <span class="pill">${esc(x.status)}</span>
+    <small>Teacher ${esc(x.teacherName||"–")} · Student ${esc(x.studentName||"none yet")} · ${esc(x.type)} · ${x.duration} min</small></div>
+    <div class="acts">${["open","booked"].includes(x.status)?bt("cancl",x.id,"Cancel lesson"):""}</div></div>`).join(""):empty("No bookings","Lessons teachers add appear here.")};
+  $("bf").onchange=draw;draw()}],
+
+reports:["Revenue reports",()=>{
+  const now=new Date(),ms=[...Array(6)].map((_,i)=>new Date(now.getFullYear(),now.getMonth()-5+i,1));
+  const ps=pays.filter(p=>p.currency===repCur&&dt(p.createdAt));
+  const tot=m=>ps.filter(p=>{const d=dt(p.createdAt);return d.getFullYear()===m.getFullYear()&&d.getMonth()===m.getMonth()}).reduce((a,p)=>a+ +p.amount,0);
+  const vals=ms.map(tot),mx=Math.max(...vals,1),by={};ps.forEach(p=>by[p.courseName]=(by[p.courseName]||0)+ +p.amount);
+  return `<div class="form"><label>Currency<select id="rc"><option ${repCur==="USD"?"selected":""}>USD</option><option ${repCur==="KES"?"selected":""}>KES</option></select></label></div>
+  <div class="g" style="margin-bottom:14px"><div class="card"><small>All time</small><h2>${money(ps.reduce((a,p)=>a+ +p.amount,0),repCur)}</h2></div><div class="card"><small>This month</small><h2>${money(vals[5],repCur)}</h2></div><div class="card"><small>Payments</small><h2>${ps.length}</h2></div></div>
+  <div class="bars" role="img" aria-label="Revenue for the last six months">${ms.map((m,i)=>`<div><small>${money(vals[i],repCur)}</small><i style="height:${Math.round(vals[i]/mx*120)}px"></i><small>${m.toLocaleString([],{month:"short"})}</small></div>`).join("")}</div>
+  <h3 class="sec">By course</h3>`+(Object.keys(by).length?Object.entries(by).sort((a,b)=>b[1]-a[1]).map(([n,v])=>`<div class="row"><span>${esc(n)}</span><strong>${money(v,repCur)}</strong></div>`).join(""):empty("No payments in "+repCur,"Record payments to see reports."))},
+ ()=>{$("rc").onchange=e=>{repCur=e.target.value;show("reports")}}],
+
+marketing:["Marketing and discount codes",()=>`<form class="form" id="kF"><label>Code<input id="kc" required placeholder="KARIBU10" style="text-transform:uppercase"></label>
+  <label>Type<select id="kt"><option value="percent">Percent off</option><option value="fixed">Fixed amount off (USD)</option></select></label>
+  <label>Value<input id="kv" type="number" min="1" required></label><label>Max uses (blank = unlimited)<input id="km" type="number" min="1"></label>
+  <label>Expires (optional)<input id="ke" type="date"></label><button class="btn">Create code</button></form>`+
+  (codes.length?codes.map(k=>`<div class="row"><div><strong>${esc(k.code)}</strong> <span class="pill">${k.active?"Active":"Off"}</span><small>${k.type==="percent"?k.value+"% off":"$"+k.value+" off"} · used ${k.usedCount||0}${k.maxUses?" of "+k.maxUses:""} · ${k.expires?"expires "+fd(k.expires):"no expiry"}</small></div>
+   <div class="acts">${bt("togk",k.id,k.active?"Turn off":"Turn on")}${bt("delk",k.id,"Delete")}</div></div>`).join(""):empty("No codes yet","Create a code to share with new learners.")),
+ ()=>{$("kF").onsubmit=async e=>{e.preventDefault();const code=$("kc").value.trim().toUpperCase().replace(/[^A-Z0-9]/g,"");if(!code)return;
+   if(codes.some(k=>k.id===code))return flash("That code already exists.",false);
+   await setDoc(doc(db,"discountCodes",code),{code,type:$("kt").value,value:+$("kv").value,maxUses:+$("km").value||0,usedCount:0,expires:$("ke").value?Timestamp.fromDate(new Date($("ke").value+"T23:59:59")):null,active:true,createdAt:serverTimestamp()});
+   await refresh("Code "+code+" created. It will be checked on the server when payments go live.")}}]
+};
+const SEED=[["Trial lesson","Trial",1,25,5,650],["Single lesson","Single",1,45,12,1500],["4 lessons a month","Monthly",4,45,40,5000],["8 lessons a month","Monthly",8,45,75,9500]];
+const ACT={
+ async role(b){const r=b.dataset.r;if(!confirm("Change this person to "+r+"?"))return;await updateDoc(doc(db,"users",b.dataset.id),{role:r});await refresh("Role changed to "+r+".")},
+ async editc(b){editC=b.dataset.id;show("courses")}, async canc(){editC="";show("courses")},
+ async togc(b){const c=courses.find(x=>x.id===b.dataset.id);await updateDoc(doc(db,"courses",c.id),{active:c.active===false});await refresh()},
+ async delc(b){if(confirm("Delete this course?")){await deleteDoc(doc(db,"courses",b.dataset.id));await refresh("Course deleted.")}},
+ async seed(){const w=writeBatch(db);SEED.forEach(([name,type,lessons,minutes,usd,kes])=>w.set(doc(collection(db,"courses")),{name,type,lessons,minutes,usd,kes,active:true,createdAt:serverTimestamp()}));await w.commit();await refresh("Launch plans added.")},
+ async enst(b){await updateDoc(doc(db,"enrollments",b.dataset.id),{status:b.dataset.s});await refresh()},
+ async cancl(b){if(confirm("Cancel this lesson?")){await updateDoc(doc(db,"lessons",b.dataset.id),{status:"cancelled"});await refresh()}},
+ async togk(b){const k=codes.find(x=>x.id===b.dataset.id);await updateDoc(doc(db,"discountCodes",k.id),{active:!k.active});await refresh()},
+ async delk(b){if(confirm("Delete this code?")){await deleteDoc(doc(db,"discountCodes",b.dataset.id));await refresh()}}
+};
+function show(k){cur=k;const [t,h,b]=PAGES[k];$("title").textContent=t;view.innerHTML=h();if(b)b();
+  $("side").querySelectorAll("button[data-k]").forEach(x=>x.setAttribute("aria-current",x.dataset.k===k))}
+view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;b.disabled=true;
+  try{await ACT[b.dataset.act](b)}catch(x){flash("That did not work: "+(x.code||x.message),false);b.disabled=false}};
+onAuthStateChanged(auth,async u=>{
+  if(!u)return location.href="auth.html";
+  uid=u.uid;const s=await getDoc(doc(db,"users",uid)),role=s.exists()?s.data().role:"student";
+  if(role!=="admin")return location.href=HOME[role]||HOME.student;
+  await load();
+  Object.entries(PAGES).forEach(([k,v])=>{const b=document.createElement("button");b.dataset.k=k;b.textContent=v[0];b.onclick=()=>{flash("");show(k)};$("side").appendChild(b)});
+  const o=document.createElement("button");o.className="out";o.textContent="Log out";o.onclick=()=>signOut(auth).then(()=>location.href="index.html");$("side").appendChild(o);
+  show("overview");
+});
+</script></body></html>
