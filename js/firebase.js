@@ -20,8 +20,8 @@ export const db = getFirestore(app);
 // Leave as is until the Worker is deployed; pages load, but file uploads won't work yet.
 export const WORKER_URL = "https://semaafrica-files.YOUR_SUBDOMAIN.workers.dev";
 
-// Your payments server on Render (shown on its dashboard), e.g. https://semaafrica-server.onrender.com
-export const SERVER_URL = "https://YOUR-SERVER.onrender.com";
+// Your payments server on Render (shown on its dashboard), your Render server
+export const SERVER_URL = "https://sema-africa.onrender.com";
 
 // Where each role lands after login
 export const HOME = { student: "student.html", teacher: "teacher.html", admin: "admin.html" };
