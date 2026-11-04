@@ -15,7 +15,7 @@ module.exports = (admin) => {
       if (!t) return res.status(401).json({ error: 'Please log in first' });
       req.uid = (await admin.auth().verifyIdToken(t)).uid;
       next();
-    } catch { res.status(401).json({ error: 'Please log in again' }); }
+    } catch (e) { console.error('[auth] token rejected:', e.code || e.message); res.status(401).json({ error: 'Please log in again' }); }
   }
 
   // 07xx / 01xx / +254… / 254…  ->  2547XXXXXXXX
