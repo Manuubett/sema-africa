@@ -4,13 +4,27 @@ const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
 
-admin.initializeApp({
-  credential: admin.credential.cert({
+// Credentials: either ONE setting FIREBASE_SERVICE_ACCOUNT (the whole key file, or that file in base64, like PayTrack),
+// or the three separate settings below.
+function loadCredential() {
+  const raw = (process.env.FIREBASE_SERVICE_ACCOUNT || '').trim();
+  if (raw) {
+    try { return admin.credential.cert(JSON.parse(raw.startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8'))); }
+    catch { console.error('FIREBASE_SERVICE_ACCOUNT is not valid JSON (or base64 of the JSON).'); process.exit(1); }
+  }
+  const missing = ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY'].filter(k => !process.env[k]);
+  if (missing.length) {
+    console.error('Missing settings (Render > Environment): ' + missing.join(', ') + '. Or set FIREBASE_SERVICE_ACCOUNT instead.');
+    process.exit(1);
+  }
+  return admin.credential.cert({
     projectId: process.env.FIREBASE_PROJECT_ID,
     clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-    privateKey: (process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
-  }),
-});
+    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+  });
+}
+admin.initializeApp({ credential: loadCredential() });
+console.log('Firebase project:', admin.app().options.projectId || '(from key file)');
 
 if (process.env.PAYMENTS_MODE === 'live') require('./providers/daraja').assertConfigured();   // stop at start-up if a setting is missing
 
