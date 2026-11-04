@@ -18,7 +18,7 @@ export const db = getFirestore(app);
 
 // Your Cloudflare Worker address (printed after you run: npx wrangler deploy).
 // Leave as is until the Worker is deployed; pages load, but file uploads won't work yet.
-export const WORKER_URL = "https://semaafrica-files.YOUR_SUBDOMAIN.workers.dev";
+export const WORKER_URL = " https://semaafrica-files.bettemanuel49.workers.dev";
 
 // Your payments server on Render (shown on its dashboard), your Render server
 export const SERVER_URL = "https://sema-africa.onrender.com";
