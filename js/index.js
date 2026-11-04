@@ -14,6 +14,15 @@ const uidOf = t => {
   const p = JSON.parse(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
   return p.user_id || p.sub;
 };
+// A provider does two things: send the M-Pesa prompt (startStk) and check the result (query).
+// Everything else (prices, discounts, enrolment) lives in routes/payments.js.
+// When Pesapal is approved, add providers/pesapal.js with the same two functions.
+const mock = {
+  name: 'mock',
+  async startStk() { return { checkoutId: 'MOCK' + Date.now() }; },
+  async query() { return { state: 'pending' }; },   // test mode is completed with /simulate instead
+};
+module.exports = () => (process.env.PAYMENTS_MODE === 'live' ? require('./daraja') : mock);
 
 async function route(req, env) {
   const tok = (req.headers.get("Authorization") || "").replace("Bearer ", "");
