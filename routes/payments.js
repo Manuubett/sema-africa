@@ -31,6 +31,7 @@ module.exports = (admin) => {
     const cs = await db.collection('courses').doc(String(courseId)).get();
     if (!cs.exists || cs.data().active === false) throw httpErr('That plan is not available', 400);
     const c = cs.data();
+    if (c.type === 'Trial') throw httpErr('Trial lessons are free. No payment is needed.', 400);
     let amount = Number(c.kes), discount = 0, codeDoc = null;
     if (code) {
       const id = String(code).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -39,7 +40,7 @@ module.exports = (admin) => {
       const ok = k && k.active && (!k.expires || k.expires.toDate() > new Date()) && (!k.maxUses || (k.usedCount || 0) < k.maxUses);
       if (!ok) throw httpErr('That discount code is not valid', 400);
       // Fixed discounts are in USD, so convert with the plan's own USD:KES ratio
-      discount = k.type === 'percent' ? amount * k.value / 100 : k.value * (c.kes / c.usd);
+      discount = k.type === 'percent' ? amount * k.value / 100 : (c.usd ? k.value * (c.kes / c.usd) : 0);
       discount = Math.min(Math.round(discount), amount);
       amount -= discount; codeDoc = id;
     }
@@ -117,6 +118,28 @@ module.exports = (admin) => {
   r.post('/quote', requireUser, async (req, res) => {
     try { const q = await priceFor(req.body.courseId, req.body.code); res.json({ amount: q.amount, discount: q.discount, currency: 'KES' }); }
     catch (e) { fail(res, e); }
+  });
+
+  // Trial plans need no payment. Each student can claim each trial once:
+  // the fixed enrolment id means a second claim (even a fast double tap) is refused.
+  r.post('/claim-free', requireUser, async (req, res) => {
+    try {
+      const cid = String(req.body.courseId || '');
+      const cs = cid ? await db.collection('courses').doc(cid).get() : null;
+      const c = cs && cs.exists ? cs.data() : null;
+      if (!c || c.active === false || c.type !== 'Trial') throw httpErr('That plan is not a free trial', 400);
+      const us = await db.collection('users').doc(req.uid).get();
+      const eref = db.collection('enrollments').doc('free_' + req.uid + '_' + cid);
+      await db.runTransaction(async tx => {
+        if ((await tx.get(eref)).exists) throw httpErr('You have already used this free trial', 400);
+        tx.set(eref, {
+          userId: req.uid, userName: us.exists ? us.data().name : '', courseId: cid, courseName: c.name, type: c.type,
+          lessonsTotal: c.lessons, lessonsLeft: c.lessons, status: 'active',
+          startDate: Timestamp.now(), expiresAt: null,
+        });
+      });
+      res.json({ ok: true });
+    } catch (e) { fail(res, e); }
   });
 
   // Start a payment: saves a pending record, then sends the M-Pesa prompt
