@@ -27,6 +27,7 @@ import {createUserWithEmailAndPassword,signInWithEmailAndPassword,updateProfile,
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {doc,getDoc,setDoc,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 const $=id=>document.getElementById(id);
+const chosen=new URLSearchParams(location.search).get("plan");if(chosen)sessionStorage.setItem("sema_plan",chosen);   // used by the student dashboard
 let mode="login";
 function setMode(m){
   mode=m;const reg=m==="register";
@@ -57,7 +58,7 @@ $("f").onsubmit=async e=>{
       const {user}=await createUserWithEmailAndPassword(auth,email,pass);
       const name=$("name").value.trim();
       await updateProfile(user,{displayName:name});
-      await setDoc(doc(db,"users",user.uid),{name,email,goal:$("goal").value,role:"student",createdAt:serverTimestamp()});
+      await setDoc(doc(db,"users",user.uid),{name,email,goal:$("goal").value,role:"student",remindEmail:true,tz:Intl.DateTimeFormat().resolvedOptions().timeZone||"",createdAt:serverTimestamp()});
       await route(user.uid);
     }else{
       const {user}=await signInWithEmailAndPassword(auth,email,pass);
