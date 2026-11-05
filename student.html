@@ -44,6 +44,8 @@ async function load(){
   enr=e;mine=m;catalog=cs.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.active!==false).sort((a,b)=>a.usd-b.usd);prog=p.sort((a,b)=>dt(b.date)-dt(a.date));pays=y.sort((a,b)=>dt(b.createdAt)-dt(a.createdAt));
   openSlots=o.filter(l=>dt(l.start)>new Date()).sort((a,b)=>dt(a.start)-dt(b.start));
   const seen={};mats=[...m1,...m2].filter(x=>!seen[x.id]&&(seen[x.id]=1)).sort((a,b)=>(dt(b.createdAt)||0)-(dt(a.createdAt)||0));
+  await Promise.all(mine.filter(l=>l.status==="booked"&&dt(l.start).getTime()>Date.now()-45*60000).map(async l=>{
+    try{const s=await getDoc(doc(db,"lessonLinks",l.id));if(s.exists())l.meetLink=s.data().meetLink}catch{}}));
 }
 const usable=()=>enr.filter(e=>e.status==="active"&&e.lessonsLeft>0&&(!e.expiresAt||dt(e.expiresAt)>new Date()));
 const credits=()=>usable().reduce((a,e)=>a+e.lessonsLeft,0);
@@ -87,7 +89,7 @@ payments:["Payment history",()=>pays.length?pays.map(p=>`<div class="row"><div><
 };
 const ACT={
  async enrol(b){b.disabled=false;openPay(catalog.find(c=>c.id===b.dataset.id))},
- async open(b){const w=window.open("","_blank");try{const r=await fetch(WORKER_URL+"/file/"+b.dataset.id,{headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});if(!r.ok)throw 0;w.location=URL.createObjectURL(await r.blob())}catch{w.close();flash("Could not open that file.",false)}b.disabled=false},
+ async open(b){const w=window.open("","_blank");try{const r=await fetch(WORKER_URL+"/file/"+b.dataset.id,{headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.error||"Could not open that file.")}w.location=URL.createObjectURL(await r.blob())}catch(x){w.close();flash(x.message||"Could not open that file.",false)}b.disabled=false},
  async book(b){const l=openSlots.find(x=>x.id===b.dataset.id),e=usable()[0];if(!l||!e)return;if(!confirm("Book "+fdt(l.start)+"? This uses 1 lesson."))return;
   try{const w=writeBatch(db);
    w.update(doc(db,"lessons",l.id),{status:"booked",studentId:uid,studentName:me.name,enrollmentId:e.id});
