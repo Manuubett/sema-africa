@@ -12,6 +12,7 @@ dialog label{display:grid;gap:6px;font-weight:700}dialog input{width:100%}
   <nav class="side" id="side" aria-label="Student menu"><a class="logo" href="index.html">Sema<b>Africa</b></a></nav>
   <main class="main wide"><h1 id="title">Karibu</h1><p class="msg" id="flash" aria-live="polite"></p><div id="view"><p>Loading…</p></div></main>
 </div>
+<dialog id="rsDlg" aria-label="Choose a new time"><div id="rsBody"></div></dialog>
 <dialog id="payDlg" aria-label="Pay for a course"><div id="payBody"></div></dialog>
 <script>
 (function(){
@@ -27,7 +28,7 @@ import {auth,db,HOME,WORKER_URL} from "./js/firebase.js";
 import * as FB from "./js/firebase.js";
 const SERVER_URL=(FB.SERVER_URL||"").replace(/\/+$/,"");
 import {onAuthStateChanged,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {doc,getDoc,collection,query,where,getDocs,writeBatch} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {doc,getDoc,updateDoc,collection,query,where,getDocs,writeBatch} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 const $=id=>document.getElementById(id), view=$("view");
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const dt=v=>v&&v.toDate?v.toDate():null;
@@ -69,13 +70,19 @@ book:["Book a lesson",()=>{
   if(!usable().length)return empty("You need an active plan to book","You have no lessons left. Choose a plan, or ask your teacher if you think this is a mistake.",["Browse courses","#browse"]);
   return `<p>You have <strong>${credits()}</strong> lesson${credits()===1?"":"s"} left. Booking uses one.</p>`+(openSlots.length?openSlots.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"Your teacher")} · ${esc(l.type)} · ${l.duration} min</small></div><button class="btn sm" data-act="book" data-id="${l.id}">Book this time</button></div>`).join(""):empty("No open times right now","Your teacher has not published new times yet. Check back soon."))}],
 upcoming:["Upcoming classes",()=>{const u=upcoming(),past=mine.filter(l=>!u.includes(l)&&dt(l.start)<new Date()).sort((a,b)=>dt(b.start)-dt(a.start));
-  return (u.length?u.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"")} · ${esc(l.type)} · ${l.duration} min</small></div>${join(l)}</div>`).join(""):empty("No classes scheduled","Book a time and it will show here with your meeting link.",["Book a lesson","#"]))+
+  return (u.length&&SERVER_URL?`<p><small>Free to cancel or move a class up to ${cancelHrs} hours before it starts. Later changes use the lesson.</small></p>`:"")+(u.length?u.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"")} · ${esc(l.type)} · ${l.duration} min</small></div><div class="acts">${join(l)}${SERVER_URL?`<button class="btn line sm" data-act="resched" data-id="${l.id}">Reschedule</button><button class="btn line sm" data-act="cancelLesson" data-id="${l.id}">Cancel</button>`:""}</div></div>`).join(""):empty("No classes scheduled","Book a time and it will show here with your meeting link.",["Book a lesson","#"]))+
   `<h3 class="sec">Past classes</h3>`+(past.length?past.slice(0,30).map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong> <span class="pill">${esc(l.status)}</span><small>${esc(l.type)}</small></div></div>`).join(""):"<p><small>Nothing yet.</small></p>")}],
 progress:["Learning progress",()=>{const att=mine.filter(l=>l.status==="attended").length;
   return `<div class="g"><div class="card"><small>Current level</small><h2>${prog[0]?esc(prog[0].level):"–"}</h2></div><div class="card"><small>Classes attended</small><h2>${att}</h2></div></div><h3 class="sec">Teacher notes</h3>`+
   (prog.length?prog.map(p=>`<div class="row"><div><strong>${esc(p.topic)}</strong> <span class="pill">${esc(p.level)}</span><small>${fd(p.date)}${p.notes?" · "+esc(p.notes):""}</small></div></div>`).join(""):empty("Nothing recorded yet","After each lesson your teacher adds notes on how you are doing."))}],
 notes:["Notes and exercises",()=>{const l=mats.filter(m=>m.type!=="Recording");return l.length?l.map(matRow).join(""):empty("No materials yet","Downloads from your teacher will appear here.")}],
 recordings:["Recorded lessons",()=>{const l=mats.filter(m=>m.type==="Recording");return l.length?l.map(matRow).join(""):empty("No recordings yet","Replay links for your classes will appear here.")}],
+reminders:["Class reminders",()=>`<p>We remind you before each class so you never miss one.</p>
+  <div class="form" style="grid-template-columns:1fr"><label style="display:flex;gap:10px;align-items:center"><input type="checkbox" id="rmE" style="width:auto" ${me.remindEmail!==false?"checked":""}> Email me${me.email?" at "+esc(me.email):""}</label>
+  <label style="display:flex;gap:10px;align-items:center"><input type="checkbox" id="rmW" style="width:auto" ${me.remindWhatsapp?"checked":""}> Send me a WhatsApp message</label>
+  <label>WhatsApp number<input id="rmP" type="tel" inputmode="tel" placeholder="07XX XXX XXX or +country code" value="${esc(me.phone||"")}"></label>
+  <button class="btn" data-act="saveRem">Save reminders</button></div>
+  <p><small>Reminders arrive about 24 hours and 1 hour before class, in your own time zone. We only message you about your classes.</small></p>`],
 payments:["Payment history",()=>pays.length?pays.map(p=>`<div class="row"><div><strong>${money(p.amount,p.currency)}</strong> · ${esc(p.courseName)}<small>${esc(p.method)} ${esc(p.reference||"")} · ${fd(p.createdAt)}</small></div></div>`).join(""):empty("No payments yet","Receipts for your plans will be listed here.")]
 };
 const ACT={
@@ -137,11 +144,38 @@ $("payDlg").onclick=async e=>{const b=e.target.closest("[data-p]");if(!b)return;
     else if(a==="check"){const s=await api("/status/"+payId);if(s.status==="paid")await paid();else{m().className="msg";m().textContent="Not confirmed yet. M-Pesa can take up to a minute."}}
     else if(a==="sim"){await api("/simulate/"+payId,"POST");await paid()}
   }catch(err){const el=m();if(el){el.className="msg err";el.textContent=err.message}b.disabled=false}};
+/* ── cancel and reschedule (the server returns the lesson safely) ── */
+let cancelHrs=12;
+if(SERVER_URL)fetch(SERVER_URL+"/api/health").then(r=>r.json()).then(h=>{if(h.cancelHours)cancelHrs=h.cancelHours}).catch(()=>{});
+async function lapi(path,body){const r=await fetch(SERVER_URL+"/api/lessons"+path,{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+await auth.currentUser.getIdToken()},body:JSON.stringify(body)});
+  const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||"Something went wrong");return d}
+const isEarly=l=>dt(l.start).getTime()-Date.now()>=cancelHrs*3600000;
+Object.assign(ACT,{
+  async saveRem(b){const w=$("rmW").checked,p=$("rmP").value.trim();
+    if(w&&p.replace(/\D/g,"").length<9){flash("Enter your WhatsApp number, or untick WhatsApp.",false);b.disabled=false;return}
+    const d={remindEmail:$("rmE").checked,remindWhatsapp:w,phone:p,tz:Intl.DateTimeFormat().resolvedOptions().timeZone||""};
+    await updateDoc(doc(db,"users",uid),d);Object.assign(me,d);flash("Reminder settings saved.");b.disabled=false},
+  async cancelLesson(b){const l=mine.find(x=>x.id===b.dataset.id);if(!l){b.disabled=false;return}
+    const msg=isEarly(l)?"Cancel this class? Your lesson will be returned to you.":"This class starts in less than "+cancelHrs+" hours, so cancelling will use the lesson. Cancel anyway?";
+    if(!confirm(msg)){b.disabled=false;return}
+    const d=await lapi("/cancel",{lessonId:l.id});await load();show("upcoming");
+    flash(d.refunded?"Class cancelled. Your lesson was returned.":"Class cancelled. The lesson was used because it was too close to the start time.")},
+  async resched(b){const l=mine.find(x=>x.id===b.dataset.id);b.disabled=false;if(!l)return;
+    if(!isEarly(l)){flash("This class starts in less than "+cancelHrs+" hours, so it can no longer be moved. You can cancel it, but the lesson will be used.",false);return}
+    const slots=openSlots.filter(s=>s.id!==l.id);
+    $("rsBody").innerHTML=`<h2 style="font-size:1.3rem">Move your class</h2><p><small>Now: ${fdt(l.start)}. Pick a new time and your lesson is kept.</small></p>`+
+      (slots.length?slots.map(s=>`<div class="row"><div><strong>${fdt(s.start)}</strong><small>${esc(s.teacherName||"")} · ${s.duration} min</small></div><button class="btn sm" data-mv="${s.id}" data-from="${l.id}">Move here</button></div>`).join(""):"<p>No open times right now. Check back soon.</p>")+
+      '<p style="margin-top:12px"><button class="btn line sm" data-close type="button">Close</button></p>';
+    $("rsDlg").showModal()}
+});
+$("rsDlg").onclick=async e=>{if(e.target.closest("[data-close]"))return $("rsDlg").close();const b=e.target.closest("[data-mv]");if(!b)return;b.disabled=true;
+  try{await lapi("/reschedule",{lessonId:b.dataset.from,newLessonId:b.dataset.mv});$("rsDlg").close();await load();show("upcoming");flash("Your class has been moved.")}
+  catch(err){$("rsDlg").close();await load();show("upcoming");flash(err.message,false)}};
 function show(k){cur=k;const [t,h]=PAGES[k];$("title").textContent=t;view.innerHTML=h();
   $("side").querySelectorAll("button[data-k]").forEach(x=>x.setAttribute("aria-current",x.dataset.k===k))}
 view.onclick=async e=>{const g=e.target.closest("[data-go]");if(g){e.preventDefault();return show(g.dataset.go)}
   const a=e.target.closest("a[href='#']");if(a){e.preventDefault();return show("book")}
-  const b=e.target.closest("[data-act]");if(!b)return;b.disabled=true;try{await ACT[b.dataset.act](b)}catch(x){flash("That did not work.",false);b.disabled=false}};
+  const b=e.target.closest("[data-act]");if(!b)return;b.disabled=true;try{await ACT[b.dataset.act](b)}catch(x){flash(x.message&&!x.code?x.message:"That did not work.",false);b.disabled=false}};
 onAuthStateChanged(auth,async u=>{
   if(!u)return location.href="auth.html";
   uid=u.uid;const s=await getDoc(doc(db,"users",uid));
@@ -151,5 +185,7 @@ onAuthStateChanged(auth,async u=>{
   Object.entries(PAGES).forEach(([k,v])=>{const b=document.createElement("button");b.dataset.k=k;b.textContent=v[0];b.onclick=()=>{flash("");show(k)};$("side").appendChild(b)});
   const o=document.createElement("button");o.className="out";o.textContent="Log out";o.onclick=()=>signOut(auth).then(()=>location.href="index.html");$("side").appendChild(o);
   show("overview");
+  const pl=sessionStorage.getItem("sema_plan");
+  if(pl){sessionStorage.removeItem("sema_plan");const c=catalog.find(x=>x.id===pl);if(c){show("browse");openPay(c)}}
 });
 </script></body></html>
