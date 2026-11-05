@@ -4,7 +4,8 @@
 <link rel="stylesheet" href="app.css">
 <style>.g{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}.g h2{font-size:1.6rem;margin-top:4px}
 .bars{display:flex;gap:10px;align-items:flex-end;height:190px;background:var(--paper);border-radius:14px;padding:16px}.bars>div{flex:1;text-align:center;display:flex;flex-direction:column;justify-content:flex-end;height:100%}
-.bars i{display:block;background:var(--sea);border-radius:6px 6px 0 0;min-height:2px}.bars small{font-size:.75rem}h3.sec{margin:26px 0 4px;font:700 1.25rem 'Bricolage Grotesque',sans-serif}</style></head><body>
+.bars i{display:block;background:var(--sea);border-radius:6px 6px 0 0;min-height:2px}.bars small{font-size:.75rem}h3.sec{margin:26px 0 4px;font:700 1.25rem 'Bricolage Grotesque',sans-serif}
+details.qz{margin-bottom:10px}details.qz>summary{cursor:pointer}details.qz details{margin:6px 0 6px 16px}</style></head><body>
 <div class="kanga"></div>
 <div class="app">
   <nav class="side" id="side" aria-label="Admin menu"><a class="logo" href="index.html">Sema<b>Africa</b></a></nav>
@@ -29,12 +30,18 @@ const dt=v=>v&&v.toDate?v.toDate():null, fd=v=>{const d=dt(v);return d?d.toLocal
 const money=(a,c)=>(c==="KES"?"KES ":"$")+Number(a||0).toLocaleString();
 const empty=(t,p)=>`<div class="empty"><strong>${t}</strong><p>${p}</p></div>`;
 const bt=(a,id,t,line=true,x="")=>`<button class="btn sm ${line?"line":""}" data-act="${a}" data-id="${id}" ${x}>${t}</button>`;
-let uid,users=[],courses=[],enr=[],pays=[],lessons=[],codes=[],cur="overview",editC="",repCur="USD";
+let uid,users=[],courses=[],enr=[],pays=[],lessons=[],codes=[],quizzes=[],attempts=[],qErr=false,cur="overview",editC="",repCur="USD";
 const students=()=>users.filter(u=>u.role==="student");
 function flash(t,ok=true){$("flash").className="msg "+(ok?"ok":"err");$("flash").textContent=t}
 async function load(){
   const all=c=>getDocs(collection(db,c)).then(s=>s.docs.map(d=>({id:d.id,...d.data()})));
+  // Quiz collections load safely so the rest of the admin page still works if their rules are not published yet
+  qErr=false;const safe=c=>all(c).catch(()=>{qErr=true;return[]});
   [users,courses,enr,pays,lessons,codes]=await Promise.all(["users","courses","enrollments","payments","lessons","discountCodes"].map(all));
+  [quizzes,attempts]=await Promise.all([safe("quizzes"),safe("quizAttempts")]);
+  const ms=x=>(x&&x.toMillis)?x.toMillis():0;
+  quizzes.sort((a,b)=>ms(b.createdAt)-ms(a.createdAt));
+  attempts.sort((a,b)=>ms(b.date)-ms(a.date));
 }
 async function refresh(m){await load();show(cur);if(m)flash(m)}
 
@@ -95,6 +102,24 @@ bookings:["Bookings",()=>`<div class="form"><label>Show<select id="bf"><option v
     <small>Teacher ${esc(x.teacherName||"–")} · Student ${esc(x.studentName||"none yet")} · ${esc(x.type)} · ${x.duration} min</small></div>
     <div class="acts">${["open","booked"].includes(x.status)?bt("cancl",x.id,"Cancel lesson"):""}</div></div>`).join(""):empty("No bookings","Lessons teachers add appear here.")};
   $("bf").onchange=draw;draw()}],
+
+quizzes:["Quiz results",()=>{
+  const tot=attempts.length,avg=tot?Math.round(attempts.reduce((a,x)=>a+(x.total?x.score/x.total:0),0)/tot*100):0;
+  return (qErr?`<p class="msg err">Quizzes could not be loaded. Publish Firestore rules that let admins read quizzes and quizAttempts.</p>`:"")+
+  `<div class="g" style="margin-bottom:14px">${[["Quizzes",quizzes.length],["Attempts",tot],["Average score",avg+"%"]].map(([a,b])=>`<div class="card"><small>${a}</small><h2>${b}</h2></div>`).join("")}</div>
+  <div class="form"><label>Search<input id="zq" placeholder="Quiz, teacher or student name"></label></div><div id="zl"></div>`},
+ ()=>{
+  const tn=z=>(users.find(u=>u.id===z.teacherId)||{}).name||"Unknown teacher";
+  const pc=a=>a.total?Math.round(a.score/a.total*100):0;
+  const pick=(q,a)=>(a&&a.length)?a.map(i=>esc(q.options[i]??"?")).join(", "):"No answer";
+  const det=(z,a)=>(z.questions||[]).map((q,i)=>{const ans=(a.answers&&a.answers[i])||[];const ok=ans.length===q.correct.length&&q.correct.every(c=>ans.includes(c));
+    return `<p><strong>${i+1}. ${esc(q.text)}</strong> ${ok?"✓":"✗"}<br><small>Answered: ${pick(q,ans)}${ok?"":" · Correct: "+pick(q,q.correct)}</small></p>`}).join("");
+  const draw=()=>{const q=$("zq").value.trim().toLowerCase();
+   const l=quizzes.filter(z=>!q||(z.title+" "+tn(z)).toLowerCase().includes(q)||attempts.some(a=>a.quizId===z.id&&(a.studentName||"").toLowerCase().includes(q)));
+   $("zl").innerHTML=l.length?l.map(z=>{const at=attempts.filter(a=>a.quizId===z.id),av=at.length?Math.round(at.reduce((s,a)=>s+pc(a),0)/at.length):0,n=(z.questions||[]).length;
+    return `<details class="qz row" style="display:block"><summary><strong>${esc(z.title)}</strong> <span class="pill">${esc(z.level||"All levels")}</span><small>Teacher ${esc(tn(z))} · ${z.studentName?esc(z.studentName):"All students"} · ${n} question${n===1?"":"s"} · ${at.length} attempt${at.length===1?"":"s"}${at.length?" · average "+av+"%":""}</small></summary>`+
+     (at.length?at.map(a=>`<details><summary>${esc(a.studentName||"Student")} · ${a.score}/${a.total} (${pc(a)}%) · ${fd(a.date)}</summary>${det(z,a)}</details>`).join(""):"<p><small>No attempts yet.</small></p>")+`</details>`}).join(""):empty("No quizzes found",quizzes.length?"Try another search.":"Quizzes teachers create will appear here.")};
+  $("zq").oninput=draw;draw()}],
 
 reports:["Revenue reports",()=>{
   const now=new Date(),ms=[...Array(6)].map((_,i)=>new Date(now.getFullYear(),now.getMonth()-5+i,1));
