@@ -1,4 +1,3 @@
-
 // SemaAfrica notifications
 // Email: Brevo HTTPS API
 // WhatsApp: Meta Cloud API
@@ -135,44 +134,57 @@ const waReady = () =>
   !!(env.WHATSAPP_TOKEN && env.WHATSAPP_PHONE_ID);
 
 async function sendWhatsApp(to, params) {
-  const r = await fetch(
-    `https://graph.facebook.com/v20.0/${env.WHATSAPP_PHONE_ID}/messages`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer ' + env.WHATSAPP_TOKEN,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to,
-        type: 'template',
-        template: {
-          name: env.WHATSAPP_TEMPLATE || 'class_reminder',
-          language: {
-            code: env.WHATSAPP_LANG || 'en',
-          },
-          components: [
-            {
-              type: 'body',
-              parameters: params.map(t => ({
-                type: 'text',
-                text: String(t).replace(/\s+/g, ' ').slice(0, 200),
-              })),
-            },
-          ],
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25000);
+
+  try {
+    const r = await fetch(
+      `https://graph.facebook.com/v20.0/${env.WHATSAPP_PHONE_ID}/messages`,
+      {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          Authorization: 'Bearer ' + env.WHATSAPP_TOKEN,
+          'Content-Type': 'application/json',
         },
-      }),
-    }
-  );
-
-  if (!r.ok) {
-    const d = await r.json().catch(() => ({}));
-
-    throw new Error(
-      'WhatsApp: ' +
-      ((d.error && d.error.message) || r.status)
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to,
+          type: 'template',
+          template: {
+            name: env.WHATSAPP_TEMPLATE || 'class_reminder',
+            language: {
+              code: env.WHATSAPP_LANG || 'en',
+            },
+            components: [
+              {
+                type: 'body',
+                parameters: params.map(t => ({
+                  type: 'text',
+                  text: String(t).replace(/\s+/g, ' ').slice(0, 200),
+                })),
+              },
+            ],
+          },
+        }),
+      }
     );
+
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+
+      throw new Error(
+        'WhatsApp: ' +
+        ((d.error && d.error.message) || r.status)
+      );
+    }
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error('WhatsApp request timed out.');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -182,6 +194,9 @@ async function sendWhatsApp(to, params) {
 
 function waNumber(p) {
   let d = String(p || '').replace(/\D/g, '');
+
+  // 00254712... (international "00" prefix) -> 254712...
+  if (d.startsWith('00')) d = d.slice(2);
 
   if (d.startsWith('0')) {
     d = '254' + d.slice(1);
