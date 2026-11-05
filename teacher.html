@@ -108,7 +108,7 @@ timetable:["Weekly timetable",()=>{
   <div class="nav2">${btn("prev","","Previous week")}<strong>${fd(days[0])} – ${fd(days[6])}</strong>${btn("next","","Next week")}${btn("today","","This week")}
   <label class="chk"><input type="checkbox" id="sc" ${showC?"checked":""}> Show cancelled</label></div>
   <p><small>Times are shown in your device's time zone${TZ?" ("+esc(TZ)+")":""}.</small></p>
-  <div class="week">${days.map(d=>`<div class="day ${d.toDateString()===todayS?"today":""}"><h3>${fd(d)}${d.toDateString()===todayS?" · Today":""}</h3>${vis.filter(l=>T(l).toDateString()===d.toDateString()).map(l=>`<div class="slot ${esc(l.status)}"><strong>${ft(T(l))}</strong> ${l.duration}m<span class="st">${ST[l.status]||esc(l.status)}</span>${esc(l.studentName||"Open")}${l.status!=="cancelled"?`<div class="acts">${joinBtn(l)}${isLive(l)?linkBtn(l):""}</div>`:""}</div>`).join("")}</div>`).join("")}</div>`},
+  <div class="week">${days.map(d=>`<div class="day ${d.toDateString()===todayS?"today":""}"><h3>${fd(d)}${d.toDateString()===todayS?" · Today":""}</h3>${vis.filter(l=>T(l).toDateString()===d.toDateString()).map(l=>`<div class="slot ${esc(l.status)}"><strong>${ft(T(l))}</strong> ${l.duration}m<span class="st">${ST[l.status]||esc(l.status)}</span>${esc(l.studentName||"Open")}<div class="acts">${l.status!=="cancelled"?joinBtn(l):""}${isLive(l)?linkBtn(l):""}${["open","cancelled"].includes(l.status)?btn("dellesson",l.id,"Delete"):""}</div></div>`).join("")}</div>`).join("")}</div>`},
  ()=>{
   $("sc").onchange=e=>{showC=e.target.checked;show("timetable")};
   $("slotF").onsubmit=e=>{e.preventDefault();busy(sub(e.target),async()=>{
@@ -183,7 +183,7 @@ history:["Attendance and lesson history",()=>{const now=Date.now();
   const l=lessons.filter(x=>T(x)<now&&x.status!=="open").reverse();
   const n=s=>l.filter(x=>x.status===s).length;
   return `<p><strong>${n("attended")}</strong> attended · <strong>${n("absent")}</strong> absent · <strong>${n("cancelled")}</strong> cancelled</p><p class="msg" id="m"></p>`+
-  (l.length?l.map(x=>lessonRow(x,x.status==="booked"?btn("attended",x.id,"Attended",false)+btn("absent",x.id,"Absent"):"")).join(""):empty("No past lessons","Completed lessons will be listed here."))}]
+  (l.length?l.map(x=>lessonRow(x,x.status==="booked"?btn("attended",x.id,"Attended",false)+btn("absent",x.id,"Absent"):btn("dellesson",x.id,"Delete"))).join(""):empty("No past lessons","Completed lessons will be listed here."))}]
 };
 
 async function refresh(msg){await load();show(cur);if(msg)say(msg)}
@@ -227,6 +227,16 @@ view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const
       }
       await deleteDoc(doc(db,"materials",id));
       await refresh("Deleted."+note);
+    })}
+  if(a==="dellesson"){
+    const l=lessons.find(x=>x.id===id);if(!l)return;
+    if(l.status==="booked"){say("A booked lesson can't be deleted. Cancel it first so the student gets their lesson back.",true);return}
+    const rec=["attended","absent"].includes(l.status)?" It will also disappear from the attendance record.":"";
+    if(!confirm("Delete the lesson on "+fd(T(l))+" at "+ft(T(l))+" permanently?"+rec+" This cannot be undone."))return;
+    return busy(b,async()=>{
+      if(links[id]||l.meetLink)await deleteDoc(doc(db,"lessonLinks",id));
+      await deleteDoc(doc(db,"lessons",id));
+      await refresh("Lesson deleted.");
     })}
   if(a==="open"){
     const w=window.open("","_blank");
