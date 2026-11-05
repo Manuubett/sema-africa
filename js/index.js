@@ -14,15 +14,21 @@ const uidOf = t => {
   const p = JSON.parse(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
   return p.user_id || p.sub;
 };
-// A provider does two things: send the M-Pesa prompt (startStk) and check the result (query).
-// Everything else (prices, discounts, enrolment) lives in routes/payments.js.
-// When Pesapal is approved, add providers/pesapal.js with the same two functions.
-const mock = {
-  name: 'mock',
-  async startStk() { return { checkoutId: 'MOCK' + Date.now() }; },
-  async query() { return { state: 'pending' }; },   // test mode is completed with /simulate instead
-};
-module.exports = () => (process.env.PAYMENTS_MODE === 'live' ? require('./daraja') : mock);
+
+// Does this student own a plan that is active and not expired? (asked with THEIR token, so rules apply)
+async function hasActivePlan(env, tok, uid) {
+  const r = await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents:runQuery`, {
+    method: "POST", headers: { Authorization: "Bearer " + tok, "Content-Type": "application/json" },
+    body: JSON.stringify({ structuredQuery: { from: [{ collectionId: "enrollments" }],
+      where: { fieldFilter: { field: { fieldPath: "userId" }, op: "EQUAL", value: { stringValue: uid } } }, limit: 50 } }) });
+  if (!r.ok) throw err("Not allowed", 403);
+  const now = Date.now();
+  return (await r.json()).some(x => {
+    const f = x.document && x.document.fields; if (!f) return false;
+    const exp = f.expiresAt && f.expiresAt.timestampValue;
+    return f.status && f.status.stringValue === "active" && (!exp || Date.parse(exp) > now);
+  });
+}
 
 async function route(req, env) {
   const tok = (req.headers.get("Authorization") || "").replace("Bearer ", "");
@@ -42,6 +48,12 @@ async function route(req, env) {
 
   if (req.method === "GET" && url.pathname.startsWith("/file/")) {
     const doc = await fsGet(env, tok, "materials/" + url.pathname.slice(6)); // Firestore rules decide who may read (free files need no login)
+    // Files shared with "all students" are for people who have a plan (the teacher, admins and free files are exempt)
+    const free = doc.fields && doc.fields.free && doc.fields.free.booleanValue === true;
+    if (!free && tok && field(doc, "studentId") === "" && field(doc, "teacherId") !== uidOf(tok)) {
+      const me = await fsGet(env, tok, `users/${uidOf(tok)}`);
+      if (field(me, "role") === "student" && !(await hasActivePlan(env, tok, uidOf(tok)))) throw err("Choose a plan to open this file", 403);
+    }
     const key = field(doc, "fileKey");
     if (!key.startsWith(`materials/${field(doc, "teacherId")}/`)) throw err("Not allowed", 403);
     const obj = await env.BUCKET.get(key);
