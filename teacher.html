@@ -36,7 +36,7 @@ const opts=(sel)=>students.map(s=>`<option value="${s.id}" ${s.id===sel?"selecte
 
 async function load(){
   const own=c=>getDocs(query(collection(db,c),where("teacherId","==",uid))).then(s=>s.docs.map(d=>({id:d.id,...d.data()})));
-  const lk=[];[lessons,mats,prog,lk]=await Promise.all([own("lessons"),own("materials"),own("progress"),own("lessonLinks")]);links={};lk.forEach(x=>links[x.id]=x.meetLink);
+  let lk=[];[lessons,mats,prog,lk]=await Promise.all([own("lessons"),own("materials"),own("progress"),own("lessonLinks")]);links={};lk.forEach(x=>links[x.id]=x.meetLink);
   lessons.sort((a,b)=>T(a)-T(b));
   prog.sort((a,b)=>b.date.toMillis()-a.date.toMillis());
   students=(await getDocs(query(collection(db,"users"),where("role","==","student")))).docs.map(d=>({id:d.id,...d.data()}));
