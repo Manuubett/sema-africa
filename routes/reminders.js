@@ -8,13 +8,17 @@ module.exports = (admin) => {
   const db = admin.firestore();
   const { FieldValue, Timestamp } = admin.firestore;
   const SITE = (process.env.SITE_URL || 'https://manuubett.github.io/sema-africa').replace(/\/+$/, '');
+  const HOURS = Number(process.env.CANCEL_HOURS || 12);   // same setting the cancel/reschedule rules use
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let running = false;
 
-  // Mark a reminder as sent BEFORE sending, so it can never go out twice
+  // Mark a reminder as sent BEFORE sending, so it can never go out twice.
+  // The claim stores the student's id, so if the slot is freed and booked by someone else,
+  // the new student still gets their own reminders.
   const claim = (lref, key) => db.runTransaction(async tx => {
     const s = await tx.get(lref), d = s.exists ? s.data() : null;
-    if (!d || d.status !== 'booked' || (d.reminders && d.reminders[key])) return false;
-    tx.update(lref, { ['reminders.' + key]: FieldValue.serverTimestamp() });
+    if (!d || d.status !== 'booked' || (d.reminders && d.reminders[key] === d.studentId)) return false;
+    tx.update(lref, { ['reminders.' + key]: d.studentId });
     return true;
   });
 
@@ -40,12 +44,18 @@ module.exports = (admin) => {
         const ls = await db.collection('lessonLinks').doc(doc.id).get();
         const link = (ls.exists && ls.data().meetLink) || l.meetLink || SITE + '/student.html';
         const soon = key === 'r1' ? 'starts in about an hour' : 'is coming up';
+        const late = key === 'r1';   // too close to move the class, so don't mention moving it
         let sent = false;
 
         if (u.remindEmail !== false && u.email && N.emailReady()) {
-          const text = `Hujambo ${first}!\n\nYour SemaAfrica class ${soon}: ${when}.\nJoin here: ${link}\n\nNeed to move it? Open your dashboard at least 12 hours before class: ${SITE}/student.html\n\nKaribu sana!`;
-          const html = `<p>Hujambo ${first.replace(/[<>&]/g, '')}!</p><p>Your SemaAfrica class ${soon}:<br><strong>${when}</strong></p><p><a href="${link}" style="background:#C42B5B;color:#fff;padding:10px 18px;border-radius:20px;text-decoration:none">Join class</a></p><p style="color:#555">Need to move it? <a href="${SITE}/student.html">Open your dashboard</a> at least 12 hours before class.</p><p>Karibu sana!</p>`;
-          try { await N.sendEmail(u.email, key === 'r1' ? 'Your Swahili class starts in about an hour' : 'Reminder: your Swahili class on ' + when, text, html); sent = true; }
+          const text = `Hujambo ${first}!\n\nYour SemaAfrica class ${soon}: ${when}.\nJoin here: ${link}` +
+            (late ? '' : `\n\nNeed to move it? Open your dashboard at least ${HOURS} hours before class: ${SITE}/student.html`) +
+            `\n\nKaribu sana!`;
+          const html = `<p>Hujambo ${esc(first)}!</p><p>Your SemaAfrica class ${soon}:<br><strong>${esc(when)}</strong></p>` +
+            `<p><a href="${esc(link)}" style="background:#C42B5B;color:#fff;padding:10px 18px;border-radius:20px;text-decoration:none">Join class</a></p>` +
+            (late ? '' : `<p style="color:#555">Need to move it? <a href="${esc(SITE)}/student.html">Open your dashboard</a> at least ${HOURS} hours before class.</p>`) +
+            `<p>Karibu sana!</p>`;
+          try { await N.sendEmail(u.email, late ? 'Your Swahili class starts in about an hour' : 'Reminder: your Swahili class on ' + when, text, html); sent = true; }
           catch (e) { out.errors++; console.error('[reminder:email]', e.message); }
         }
         if (u.remindWhatsapp && u.phone && N.waReady()) {
@@ -60,16 +70,17 @@ module.exports = (admin) => {
   }
 
   // A free timer service (such as cron-job.org) calls this every 10 minutes. It also keeps the server awake.
+  // Prefer sending the secret in the x-cron-key header so it does not appear in logs.
   const same = (a, b) => { const h = s => crypto.createHash('sha256').update(String(s)).digest(); return crypto.timingSafeEqual(h(a), h(b)); };
   const guard = (req, res, next) => {
-    const key = req.query.key || req.get('x-cron-key') || '';
+    const key = req.get('x-cron-key') || req.query.key || '';
     if (!process.env.CRON_SECRET || !same(key, process.env.CRON_SECRET)) return res.status(403).json({ error: 'Not allowed' });
     next();
   };
   r.get('/run', guard, async (req, res) => {
     try { res.json(await run()); } catch (e) { console.error('[reminders]', e.message); res.status(500).json({ error: 'Failed' }); }
   });
-  // Send yourself a sample email to confirm the mail settings work: /api/reminders/test-email?key=...&to=you@example.com
+  // Send yourself a sample email to confirm the mail settings work: /api/reminders/test-email?to=you@example.com (with the x-cron-key header, or ?key=...)
   r.get('/test-email', guard, async (req, res) => {
     if (!N.emailReady()) return res.status(400).json({ error: 'Email settings (BREVO_API_KEY and MAIL_FROM) are not set' });
     try { await N.sendEmail(String(req.query.to || ''), 'SemaAfrica test email', 'Your reminder emails are working.', '<p>Your reminder emails are working.</p>'); res.json({ ok: true }); }
