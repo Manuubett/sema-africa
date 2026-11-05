@@ -18,27 +18,31 @@
 </script>
 <script type="module">
 import {auth,db,HOME,WORKER_URL} from "./js/firebase.js";
+import * as FB from "./js/firebase.js";
+const SERVER_URL=(FB.SERVER_URL||"").replace(/\/+$/,"");
+async function staffCancel(id){const r=await fetch(SERVER_URL+"/api/lessons/staff-cancel",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+await auth.currentUser.getIdToken()},body:JSON.stringify({lessonId:id})});
+  const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||"Could not cancel");return d}
 import {onAuthStateChanged,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {doc,getDoc,collection,query,where,getDocs,addDoc,updateDoc,Timestamp,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {doc,getDoc,setDoc,collection,query,where,getDocs,addDoc,updateDoc,Timestamp,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 const $=id=>document.getElementById(id), view=$("view");
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const T=l=>l.start.toDate(), fd=d=>d.toLocaleDateString([],{weekday:"short",day:"numeric",month:"short"}), ft=d=>d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
 const mon=d=>{d=new Date(d);d.setHours(0,0,0,0);d.setDate(d.getDate()-((d.getDay()+6)%7));return d};
 const ST={open:"Open slot",booked:"Booked",attended:"Attended",absent:"Absent",cancelled:"Cancelled"};
 const empty=(t,p)=>`<div class="empty"><strong>${t}</strong><p>${p}</p></div>`;
-let uid,me,students=[],lessons=[],mats=[],prog=[],week=mon(new Date()),cur="timetable",pick="";
+let links={},uid,me,students=[],lessons=[],mats=[],prog=[],week=mon(new Date()),cur="timetable",pick="";
 const nameOf=id=>(students.find(s=>s.id===id)||{}).name||"";
 const opts=(sel)=>students.map(s=>`<option value="${s.id}" ${s.id===sel?"selected":""}>${esc(s.name)}</option>`).join("");
 
 async function load(){
   const own=c=>getDocs(query(collection(db,c),where("teacherId","==",uid))).then(s=>s.docs.map(d=>({id:d.id,...d.data()})));
-  [lessons,mats,prog]=await Promise.all([own("lessons"),own("materials"),own("progress")]);
+  const lk=[];[lessons,mats,prog,lk]=await Promise.all([own("lessons"),own("materials"),own("progress"),own("lessonLinks")]);links={};lk.forEach(x=>links[x.id]=x.meetLink);
   lessons.sort((a,b)=>T(a)-T(b));
   prog.sort((a,b)=>b.date.toMillis()-a.date.toMillis());
   students=(await getDocs(query(collection(db,"users"),where("role","==","student")))).docs.map(d=>({id:d.id,...d.data()}));
 }
 const lessonRow=(l,acts="")=>`<div class="row"><div><strong>${fd(T(l))}, ${ft(T(l))}</strong> <span class="pill">${ST[l.status]||l.status}</span>
-  <small>${esc(l.studentName||"No student yet")} · ${esc(l.type)} · ${l.duration} min</small></div><div class="acts">${l.meetLink?`<a class="btn line sm" href="${esc(l.meetLink)}" target="_blank" rel="noopener">Join</a>`:""}${acts}</div></div>`;
+  <small>${esc(l.studentName||"No student yet")} · ${esc(l.type)} · ${l.duration} min</small></div><div class="acts">${(links[l.id]||l.meetLink)?`<a class="btn line sm" href="${esc(links[l.id]||l.meetLink)}" target="_blank" rel="noopener">Join</a>`:""}${acts}</div></div>`;
 const btn=(a,id,t,line=true)=>`<button class="btn sm ${line?"line":""}" data-act="${a}" data-id="${id}">${t}</button>`;
 
 let qu=[];
@@ -63,8 +67,10 @@ timetable:["Weekly timetable",()=>{
   <div class="nav2">${btn("prev","","Previous week")}<strong>${fd(days[0])} – ${fd(days[6])}</strong>${btn("next","","Next week")}${btn("today","","This week")}</div>
   <div class="week">${days.map(d=>`<div class="day"><h3>${fd(d)}</h3>${lessons.filter(l=>T(l).toDateString()===d.toDateString()).map(l=>`<div class="slot ${l.status==="open"?"open":""}"><strong>${ft(T(l))}</strong> ${l.duration}m<br>${esc(l.studentName||"Open")}</div>`).join("")}</div>`).join("")}</div>`},
  ()=>{$("slotF").onsubmit=async e=>{e.preventDefault();const s=$("ss").value;
-   await addDoc(collection(db,"lessons"),{teacherId:uid,teacherName:me.name,studentId:s,studentName:nameOf(s),start:Timestamp.fromDate(new Date($("sd").value+"T"+$("st").value)),
-   duration:+$("sl").value,type:$("sy").value,meetLink:$("sm").value.trim(),status:s?"booked":"open"});
+   const ml=$("sm").value.trim();if(ml&&!/^https:\/\//.test(ml)){$("m").className="msg err";$("m").textContent="The meeting link must start with https://";return}
+   const lr=doc(collection(db,"lessons"));
+   await setDoc(lr,{teacherId:uid,teacherName:me.name,studentId:s,studentName:nameOf(s),start:Timestamp.fromDate(new Date($("sd").value+"T"+$("st").value)),duration:+$("sl").value,type:$("sy").value,status:s?"booked":"open"});
+   if(ml)await setDoc(doc(db,"lessonLinks",lr.id),{teacherId:uid,meetLink:ml});
    await refresh("Added to your timetable.")}}],
 upcoming:["Upcoming lessons",()=>{const now=Date.now();
   const l=lessons.filter(x=>T(x)>=now&&["open","booked"].includes(x.status));
@@ -114,6 +120,7 @@ view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const
   if(a==="today"){week=mon(new Date());return show("timetable")}
   if(a==="prog"){pick=id;return show("progress")}
   if(a==="open"){const w=window.open("","_blank");try{const r=await fetch(WORKER_URL+"/file/"+id,{headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});if(!r.ok)throw 0;w.location=URL.createObjectURL(await r.blob())}catch{w.close();alert("Could not open the file.")}return}
+  if(a==="cancelled"&&SERVER_URL){if(!confirm("Cancel this lesson? A booked student gets their lesson back."))return;b.disabled=true;try{await staffCancel(id);await refresh("Lesson cancelled.")}catch(x){alert(x.message);b.disabled=false}return}
   b.disabled=true;await updateDoc(doc(db,"lessons",id),{status:a});await refresh()};
 onAuthStateChanged(auth,async u=>{
   if(!u)return location.href="auth.html";
