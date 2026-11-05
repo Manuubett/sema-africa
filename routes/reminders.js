@@ -37,7 +37,8 @@ module.exports = (admin) => {
         const u = (await db.collection('users').doc(l.studentId).get()).data() || {};
         const when = N.formatWhen(l.start.toDate(), u.tz);
         const first = String(u.name || 'there').split(' ')[0];
-        const link = l.meetLink || SITE + '/student.html';
+        const ls = await db.collection('lessonLinks').doc(doc.id).get();
+        const link = (ls.exists && ls.data().meetLink) || l.meetLink || SITE + '/student.html';
         const soon = key === 'r1' ? 'starts in about an hour' : 'is coming up';
         let sent = false;
 
@@ -70,7 +71,7 @@ module.exports = (admin) => {
   });
   // Send yourself a sample email to confirm the mail settings work: /api/reminders/test-email?key=...&to=you@example.com
   r.get('/test-email', guard, async (req, res) => {
-    if (!N.emailReady()) return res.status(400).json({ error: 'Email settings (SMTP_*) are not set' });
+    if (!N.emailReady()) return res.status(400).json({ error: 'Email settings (BREVO_API_KEY and MAIL_FROM) are not set' });
     try { await N.sendEmail(String(req.query.to || ''), 'SemaAfrica test email', 'Your reminder emails are working.', '<p>Your reminder emails are working.</p>'); res.json({ ok: true }); }
     catch (e) { res.status(400).json({ error: e.message }); }
   });
