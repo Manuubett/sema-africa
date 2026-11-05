@@ -50,7 +50,7 @@ const mon=d=>{d=new Date(d);d.setHours(0,0,0,0);d.setDate(d.getDate()-((d.getDay
 const TZ=(Intl.DateTimeFormat().resolvedOptions().timeZone)||"";
 const ST={open:"Open slot",booked:"Booked",attended:"Attended",absent:"Absent",cancelled:"Cancelled"};
 const empty=(t,p)=>`<div class="empty"><strong>${t}</strong><p>${p}</p></div>`;
-let links={},uid,me,students=[],lessons=[],mats=[],prog=[],week=mon(new Date()),cur="timetable",pick="",showC=false,qu=[];
+let links={},uid,me,students=[],lessons=[],mats=[],prog=[],week=mon(new Date()),cur="timetable",pick="",showC=false,qu=[],quizzes=[],attempts=[],qb=null,qres=null,qlErr=false;
 const nameOf=id=>(students.find(s=>s.id===id)||{}).name||"";
 const opts=(sel)=>students.map(s=>`<option value="${s.id}" ${s.id===sel?"selected":""}>${esc(s.name)}</option>`).join("");
 
@@ -71,7 +71,12 @@ const sub=f=>f.querySelector("button:not([type=button])");
 
 async function load(){
   const own=c=>getDocs(query(collection(db,c),where("teacherId","==",uid))).then(s=>s.docs.map(d=>({id:d.id,...d.data()})));
-  let lk=[];[lessons,mats,prog,lk]=await Promise.all([own("lessons"),own("materials"),own("progress"),own("lessonLinks")]);links={};lk.forEach(x=>links[x.id]=x.meetLink);
+  // Quiz collections are loaded safely so the rest of the page works even if their rules are not published yet
+  qlErr=false;const safe=c=>own(c).catch(()=>{qlErr=true;return[]});
+  let lk=[];[lessons,mats,prog,lk,quizzes,attempts]=await Promise.all([own("lessons"),own("materials"),own("progress"),own("lessonLinks"),safe("quizzes"),safe("quizAttempts")]);links={};lk.forEach(x=>links[x.id]=x.meetLink);
+  const ms=x=>(x&&x.toMillis)?x.toMillis():0;
+  quizzes.sort((a,b)=>ms(b.createdAt)-ms(a.createdAt));
+  attempts.sort((a,b)=>ms(b.date)-ms(a.date));
   lessons.sort((a,b)=>T(a)-T(b));
   prog.sort((a,b)=>b.date.toMillis()-a.date.toMillis());
   mats.sort((a,b)=>((b.createdAt&&b.createdAt.toMillis&&b.createdAt.toMillis())||0)-((a.createdAt&&a.createdAt.toMillis&&a.createdAt.toMillis())||0));
@@ -87,6 +92,40 @@ const OKFILE=/\.(pdf|docx?|mp3|m4a|wav|ogg|aac|jpe?g|png|webp|gif)$/i;
 const sel=(arr,v,i,k)=>`<select data-i="${i}" data-k="${k}">${arr.map(a=>`<option ${a===v?"selected":""}>${a}</option>`).join("")}</select>`;
 function drawQ(){const q=$("qL");if(!q)return;q.innerHTML=qu.map((x,i)=>`<div class="row" style="display:grid;gap:8px"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><small>${esc(x.f.name)} · ${x.st==="uploading"?"Uploading…":x.st==="error"?"Failed: "+esc(x.err):"Ready"}</small><button class="btn line sm" data-rm="${i}" type="button">Remove</button></div>
  <div class="form" style="margin:0;padding:0"><label>Title<input data-i="${i}" data-k="title" value="${esc(x.title)}"></label><label>Type${sel(TYPES,x.type,i,"type")}</label><label>Level${sel(LEVELS,x.level,i,"level")}</label><label>Free for everyone<input type="checkbox" data-i="${i}" data-k="free" ${x.free?"checked":""}></label></div></div>`).join("")}
+
+// ---- Quizzes ----
+const newQ=()=>({text:"",multi:false,options:["",""],correct:[]});
+const letter=i=>String.fromCharCode(65+i);
+const pickTxt=(q,a)=>(a&&a.length)?a.map(i=>esc(q.options[i]??"?")).join(", "):"No answer";
+function qList(){
+  const rows=quizzes.map(z=>{const n=attempts.filter(a=>a.quizId===z.id).length,c=(z.questions||[]).length;
+    return `<div class="row"><div><strong>${esc(z.title)}</strong> <span class="pill">${esc(z.level||"All levels")}</span><small>${c} question${c===1?"":"s"} · ${z.studentName?esc(z.studentName):"All my students"} · ${n} attempt${n===1?"":"s"}</small></div><div class="acts">${btn("qres",z.id,"Results")}${btn("qedit",z.id,"Edit")}${btn("qdel",z.id,"Delete")}</div></div>`}).join("");
+  return `<p class="msg ${qlErr?"err":""}" id="m">${qlErr?"Quizzes could not be loaded. Publish the Firestore rules for quizzes and quizAttempts.":""}</p><div class="acts" style="margin-bottom:12px">${btn("qnew","","New quiz",false)}</div>`+(rows||empty("No quizzes yet","Click New quiz to write your first one."))}
+function qCard(q,i){
+  return `<div class="row" style="display:grid;gap:8px"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>Question ${i+1}</strong>${btn("qrmq",i,"Remove question")}</div>
+  <div class="form" style="margin:0;padding:0"><label class="full">Question<input data-qk="text" data-qi="${i}" value="${esc(q.text)}" placeholder="Type the question"></label>
+  <label>Answer type<select data-qk="multi" data-qi="${i}"><option value="0" ${q.multi?"":"selected"}>One correct answer (radio buttons)</option><option value="1" ${q.multi?"selected":""}>Several correct answers (check boxes)</option></select></label></div>
+  <small>Tick the correct ${q.multi?"answers":"answer"}.</small>
+  ${q.options.map((o,j)=>`<div style="display:flex;gap:8px;align-items:center"><input style="width:auto;flex:none" type="${q.multi?"checkbox":"radio"}" name="c${i}" data-qk="correct" data-qi="${i}" data-oi="${j}" ${q.correct.includes(j)?"checked":""} aria-label="Correct answer ${letter(j)}"><input style="flex:1" data-qk="opt" data-qi="${i}" data-oi="${j}" value="${esc(o)}" placeholder="Option ${letter(j)}">${q.options.length>2?btn("qrmo",i+":"+j,"Remove"):""}</div>`).join("")}
+  <div class="acts">${q.options.length<6?btn("qaddo",i,"Add option"):""}</div></div>`}
+const qBuilder=()=>`<div class="form"><label class="full">Quiz title<input id="qt" value="${esc(qb.title)}" placeholder="e.g. Greetings and introductions"></label>
+  <label>Level<select id="qlv">${LEVELS.map(l=>`<option ${l===qb.level?"selected":""}>${l}</option>`).join("")}</select></label>
+  <label>Give to<select id="qs"><option value="">All my students</option>${opts(qb.studentId)}</select></label></div>
+  <div id="qQs">${qb.questions.map(qCard).join("")}</div>
+  <div class="acts" style="margin:12px 0">${btn("qaddq","","Add question")}${btn("qsave","","Save quiz",false)}${btn("qcancel","","Cancel")}</div><p class="msg" id="m"></p>`;
+function syncB(){if(!qb||!$("qt"))return;qb.title=$("qt").value;qb.level=$("qlv").value;qb.studentId=$("qs").value}
+function drawB(){syncB();view.innerHTML=qBuilder()}
+function qResults(){
+  const z=quizzes.find(x=>x.id===qres);
+  if(!z)return `<p class="msg" id="m"></p><div class="acts">${btn("qback","","All quizzes")}</div>`+empty("Quiz not found","It may have been deleted.");
+  const at=attempts.filter(a=>a.quizId===z.id);
+  const who=z.studentId?students.filter(s=>s.id===z.studentId):students;
+  const todo=who.filter(s=>!at.some(a=>a.studentId===s.id));
+  const det=a=>(z.questions||[]).map((q,i)=>{const ans=(a.answers&&a.answers[i])||[];const ok=ans.length===q.correct.length&&q.correct.every(c=>ans.includes(c));
+    return `<p><strong>${i+1}. ${esc(q.text)}</strong> ${ok?"✓":"✗"}<br><small>Answered: ${pickTxt(q,ans)}${ok?"":" · Correct: "+pickTxt(q,q.correct)}</small></p>`}).join("");
+  return `<p class="msg" id="m"></p><div class="acts">${btn("qback","","All quizzes")}</div><h2 style="margin:16px 0 4px;font-size:1.3rem">${esc(z.title)}</h2>`+
+    (at.length?at.map(a=>`<div class="row" style="display:block"><details><summary><strong>${esc(a.studentName||nameOf(a.studentId))}</strong> · ${a.score}/${a.total} · ${a.date&&a.date.toDate?fd(a.date.toDate()):""}</summary>${det(a)}</details></div>`).join(""):empty("No attempts yet","Results appear here when students submit this quiz."))+
+    (todo.length?`<p><small>Not done yet: ${todo.map(x=>esc(x.name)).join(", ")}</small></p>`:"")}
 
 const PAGES={
 students:["Student list",()=>{
@@ -167,6 +206,9 @@ materials:["Learning materials",()=>`<div class="form"><label class="full" style
    const ok=qu.filter(x=>x.st==="done").length;qu=qu.filter(x=>x.st!=="done");
    await load();show("materials");say(ok+" uploaded"+(qu.length?", "+qu.length+" failed. Fix and try again.":"."),qu.length>0)})}],
 
+quizzes:["Quizzes",()=>qb?qBuilder():qres?qResults():qList(),
+ ()=>{$("title").textContent=qb?(qb.id?"Edit quiz":"New quiz"):qres?"Quiz results":"Quizzes"}],
+
 progress:["Student progress",()=>`<form class="form" id="pF"><label>Student<select id="ps" required><option value="">Choose…</option>${opts(pick)}</select></label>
   <label>Level<select id="pl">${LEVELS.slice(1).map(l=>`<option>${l}</option>`).join("")}</select></label>
   <label class="full">Topic covered<input id="pt" required></label><label class="full">Notes (strengths, what to practise)<textarea id="pn"></textarea></label>
@@ -228,6 +270,33 @@ view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const
       await deleteDoc(doc(db,"materials",id));
       await refresh("Deleted."+note);
     })}
+  if(a==="qnew"){qb={title:"",level:"All levels",studentId:"",questions:[newQ()]};return show("quizzes")}
+  if(a==="qedit"){const z=quizzes.find(x=>x.id===id);if(!z)return;qb={id:z.id,title:z.title,level:z.level||"All levels",studentId:z.studentId||"",questions:JSON.parse(JSON.stringify(z.questions||[]))};return show("quizzes")}
+  if(a==="qres"){qres=id;return show("quizzes")}
+  if(a==="qback"||a==="qcancel"){qb=null;qres=null;return show("quizzes")}
+  if(a==="qaddq"){syncB();qb.questions.push(newQ());return drawB()}
+  if(a==="qrmq"){syncB();qb.questions.splice(+id,1);return drawB()}
+  if(a==="qaddo"){syncB();qb.questions[+id].options.push("");return drawB()}
+  if(a==="qrmo"){const [i,j]=id.split(":").map(Number);syncB();const q=qb.questions[i];q.options.splice(j,1);q.correct=q.correct.filter(x=>x!==j).map(x=>x>j?x-1:x);return drawB()}
+  if(a==="qdel"){
+    const z=quizzes.find(x=>x.id===id);if(!z)return;
+    if(!confirm('Delete the quiz "'+z.title+'"? Students will no longer see it. This cannot be undone.'))return;
+    return busy(b,async()=>{await deleteDoc(doc(db,"quizzes",id));await refresh("Quiz deleted.")})}
+  if(a==="qsave"){
+    return busy(b,async()=>{
+      syncB();
+      const t=qb.title.trim();if(!t)throw new Error("Give the quiz a title.");
+      if(!qb.questions.length)throw new Error("Add at least one question.");
+      qb.questions.forEach((q,i)=>{const n="Question "+(i+1)+": ";
+        if(!q.text.trim())throw new Error(n+"write the question.");
+        if(q.options.some(o=>!o.trim()))throw new Error(n+"fill in every option or remove the empty ones.");
+        if(!q.correct.length)throw new Error(n+"tick the correct answer.")});
+      const st=qb.studentId;
+      const data={title:t,level:qb.level,studentId:st,studentName:nameOf(st),
+        questions:qb.questions.map(q=>({text:q.text.trim(),multi:!!q.multi,options:q.options.map(o=>o.trim()),correct:[...q.correct].sort((x,y)=>x-y)}))};
+      if(qb.id)await updateDoc(doc(db,"quizzes",qb.id),data);
+      else await addDoc(collection(db,"quizzes"),{...data,teacherId:uid,createdAt:serverTimestamp()});
+      qb=null;await refresh("Quiz saved.")})}
   if(a==="dellesson"){
     const l=lessons.find(x=>x.id===id);if(!l)return;
     if(l.status==="booked"){say("A booked lesson can't be deleted. Cancel it first so the student gets their lesson back.",true);return}
@@ -259,6 +328,16 @@ view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const
   if(!["attended","absent"].includes(a))return;
   busy(b,async()=>{await updateDoc(doc(db,"lessons",id),{status:a});await refresh()})};
 
+// Quiz builder: keep the typed text and ticked answers in memory
+view.addEventListener("input",e=>{const t=e.target,k=t.dataset.qk;if(!qb||!k)return;const q=qb.questions[+t.dataset.qi];if(!q)return;
+  if(k==="text")q.text=t.value;
+  if(k==="opt")q.options[+t.dataset.oi]=t.value});
+view.addEventListener("change",e=>{const t=e.target,k=t.dataset.qk;if(!qb||(k!=="correct"&&k!=="multi"))return;const q=qb.questions[+t.dataset.qi];if(!q)return;
+  if(k==="multi"){q.multi=t.value==="1";if(!q.multi)q.correct=q.correct.slice(0,1);return drawB()}
+  const o=+t.dataset.oi;
+  if(q.multi)q.correct=t.checked?[...new Set([...q.correct,o])]:q.correct.filter(x=>x!==o);
+  else q.correct=[o]});
+
 function fatal(x){
   $("title").textContent="Could not load your page";
   view.innerHTML=`<div class="empty"><strong></strong><p>Check your internet connection and try again. If it keeps happening, the usual causes are: Firestore rules not published, the Firestore database not created, a missing file in the js folder, or wrong Firebase settings.</p><button class="btn" type="button" onclick="location.reload()">Try again</button></div>`;
@@ -271,7 +350,7 @@ onAuthStateChanged(auth,async u=>{
     uid=u.uid;const s=await getDoc(doc(db,"users",uid));me=s.exists()?s.data():{role:"student"};
     if(me.role!=="teacher")return location.href=HOME[me.role]||HOME.student;
     await load();
-    Object.entries(PAGES).forEach(([k,v])=>{const b=document.createElement("button");b.dataset.k=k;b.textContent=v[0];b.onclick=()=>show(k);$("side").appendChild(b)});
+    Object.entries(PAGES).forEach(([k,v])=>{const b=document.createElement("button");b.dataset.k=k;b.textContent=v[0];b.onclick=()=>{if(k==="quizzes"){qb=null;qres=null}show(k)};$("side").appendChild(b)});
     const o=document.createElement("button");o.className="out";o.textContent="Log out";o.onclick=()=>signOut(auth).then(()=>location.href="index.html");$("side").appendChild(o);
     show("timetable");
     // Wake the Render server early so cancelling a lesson is quick later
