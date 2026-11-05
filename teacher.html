@@ -7,129 +7,251 @@
   <nav class="side" id="side" aria-label="Teacher menu"><a class="logo" href="index.html">Sema<b>Africa</b></a></nav>
   <main class="main wide"><h1 id="title"></h1><div id="view"><p>Loading…</p></div></main>
 </div>
+<div class="banner" id="banner" role="alert" hidden><p id="bmsg"></p><button class="btn sm" id="bre" type="button">Reload page</button><button class="btn line sm" id="bx" type="button">Dismiss</button></div>
 <script>
+// Last-resort error banner. It never replaces the page, so a teacher keeps what they typed.
 (function(){
-  function f(m){var v=document.getElementById("view"),t=document.getElementById("title");
-    if(t){t.textContent="Something went wrong";}
-    if(v){v.innerHTML='<div class="empty"><strong></strong><p>Take a screenshot of this message and send it to me. Usual causes: Firestore rules not published, the Firestore database not created, a missing file in the js folder, or wrong Firebase settings.</p></div>';v.querySelector("strong").textContent=m;}}
-  addEventListener("unhandledrejection",function(e){f(String(e.reason&&(e.reason.code||e.reason.message)||e.reason))});
-  addEventListener("error",function(e){f(e.message||"A script failed to load")});
+  var b=document.getElementById("banner"),m=document.getElementById("bmsg");
+  function show(t){m.textContent="Something went wrong. If you were saving something, check that it was saved before you try again. ("+t+")";b.hidden=false}
+  document.getElementById("bre").onclick=function(){location.reload()};
+  document.getElementById("bx").onclick=function(){b.hidden=true};
+  addEventListener("unhandledrejection",function(e){var r=e.reason;show(String(r&&(r.code||r.message)||r))});
+  addEventListener("error",function(e){show(e.message||"A script failed to load")});
 })();
 </script>
 <script type="module">
 import {auth,db,HOME,WORKER_URL} from "./js/firebase.js";
 import * as FB from "./js/firebase.js";
-const SERVER_URL=(FB.SERVER_URL||"").replace(/\/+$/,"");
-async function staffCancel(id){const r=await fetch(SERVER_URL+"/api/lessons/staff-cancel",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+await auth.currentUser.getIdToken()},body:JSON.stringify({lessonId:id})});
-  const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||"Could not cancel");return d}
 import {onAuthStateChanged,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {doc,getDoc,setDoc,collection,query,where,getDocs,addDoc,updateDoc,Timestamp,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const SERVER_URL=(FB.SERVER_URL||"").trim().replace(/\/+$/,"");
+const WORKER=(WORKER_URL||"").trim().replace(/\/+$/,"");
+
+// The Render free plan can take up to a minute to wake up, so allow for that.
+async function staffCancel(id){
+  const c=new AbortController(),t=setTimeout(()=>c.abort(),75000);
+  try{
+    const r=await fetch(SERVER_URL+"/api/lessons/staff-cancel",{method:"POST",signal:c.signal,headers:{"Content-Type":"application/json",Authorization:"Bearer "+await auth.currentUser.getIdToken()},body:JSON.stringify({lessonId:id})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||"Could not cancel");
+    return d;
+  }catch(e){
+    if(e.name==="AbortError")throw new Error("The server took too long to answer. Wait a minute, then check Upcoming lessons before trying again.");
+    throw e;
+  }finally{clearTimeout(t)}
+}
+
 const $=id=>document.getElementById(id), view=$("view");
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const T=l=>l.start.toDate(), fd=d=>d.toLocaleDateString([],{weekday:"short",day:"numeric",month:"short"}), ft=d=>d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+const iso=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
 const mon=d=>{d=new Date(d);d.setHours(0,0,0,0);d.setDate(d.getDate()-((d.getDay()+6)%7));return d};
+const TZ=(Intl.DateTimeFormat().resolvedOptions().timeZone)||"";
 const ST={open:"Open slot",booked:"Booked",attended:"Attended",absent:"Absent",cancelled:"Cancelled"};
 const empty=(t,p)=>`<div class="empty"><strong>${t}</strong><p>${p}</p></div>`;
-let links={},uid,me,students=[],lessons=[],mats=[],prog=[],week=mon(new Date()),cur="timetable",pick="";
+let links={},uid,me,students=[],lessons=[],mats=[],prog=[],week=mon(new Date()),cur="timetable",pick="",showC=false,qu=[];
 const nameOf=id=>(students.find(s=>s.id===id)||{}).name||"";
 const opts=(sel)=>students.map(s=>`<option value="${s.id}" ${s.id===sel?"selected":""}>${esc(s.name)}</option>`).join("");
+
+// Meeting links: one link per lesson, kept in lessonLinks/{lessonId}
+const linkOf=l=>links[l.id]||l.meetLink||"";
+const isLive=l=>T(l)>=Date.now()&&["open","booked"].includes(l.status);
+const okUrl=u=>/^https:\/\//i.test(u);
+// Remember the last link used, so adding many slots is one paste at most
+const lastLink=()=>{try{return localStorage.getItem("lastMeetLink")||""}catch{return ""}};
+const saveLast=u=>{try{localStorage.setItem("lastMeetLink",u)}catch{}};
+const joinBtn=l=>linkOf(l)?`<a class="btn sm" href="${esc(linkOf(l))}" target="_blank" rel="noopener">Join</a>`:"";
+
+// Show a message in the page's #m line (or an alert if the page has none)
+const say=(t,bad)=>{const m=$("m");if(m){m.className="msg "+(bad?"err":"ok");m.textContent=t}else if(bad)alert(t)};
+// Run an action once: the button is disabled while it works, errors show inline
+const busy=async(b,fn)=>{if(!b||b.disabled)return;b.disabled=true;try{await fn()}catch(x){say((x&&x.message)||String(x),true)}finally{if(b.isConnected)b.disabled=false}};
+const sub=f=>f.querySelector("button:not([type=button])");
 
 async function load(){
   const own=c=>getDocs(query(collection(db,c),where("teacherId","==",uid))).then(s=>s.docs.map(d=>({id:d.id,...d.data()})));
   let lk=[];[lessons,mats,prog,lk]=await Promise.all([own("lessons"),own("materials"),own("progress"),own("lessonLinks")]);links={};lk.forEach(x=>links[x.id]=x.meetLink);
   lessons.sort((a,b)=>T(a)-T(b));
   prog.sort((a,b)=>b.date.toMillis()-a.date.toMillis());
+  mats.sort((a,b)=>((b.createdAt&&b.createdAt.toMillis&&b.createdAt.toMillis())||0)-((a.createdAt&&a.createdAt.toMillis&&a.createdAt.toMillis())||0));
   students=(await getDocs(query(collection(db,"users"),where("role","==","student")))).docs.map(d=>({id:d.id,...d.data()}));
 }
 const lessonRow=(l,acts="")=>`<div class="row"><div><strong>${fd(T(l))}, ${ft(T(l))}</strong> <span class="pill">${ST[l.status]||l.status}</span>
-  <small>${esc(l.studentName||"No student yet")} · ${esc(l.type)} · ${l.duration} min</small></div><div class="acts">${(links[l.id]||l.meetLink)?`<a class="btn line sm" href="${esc(links[l.id]||l.meetLink)}" target="_blank" rel="noopener">Join</a>`:""}${acts}</div></div>`;
-const btn=(a,id,t,line=true)=>`<button class="btn sm ${line?"line":""}" data-act="${a}" data-id="${id}">${t}</button>`;
+  <small>${esc(l.studentName||"No student yet")} · ${esc(l.type)} · ${l.duration} min</small></div><div class="acts">${joinBtn(l)}${acts}</div></div>`;
+const btn=(a,id,t,line=true)=>`<button class="btn sm ${line?"line":""}" type="button" data-act="${a}" data-id="${id}">${t}</button>`;
+const linkBtn=l=>btn("link",l.id,linkOf(l)?"Change link":"Add link");
 
-let qu=[];
 const TYPES=["Notes","Exercise","Audio","Recording","Other"],LEVELS=["All levels","A1 Beginner","A2 Elementary","B1 Intermediate","B2 Upper intermediate"];
+const OKFILE=/\.(pdf|docx?|mp3|m4a|wav|ogg|aac|jpe?g|png|webp|gif)$/i;
 const sel=(arr,v,i,k)=>`<select data-i="${i}" data-k="${k}">${arr.map(a=>`<option ${a===v?"selected":""}>${a}</option>`).join("")}</select>`;
 function drawQ(){const q=$("qL");if(!q)return;q.innerHTML=qu.map((x,i)=>`<div class="row" style="display:grid;gap:8px"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><small>${esc(x.f.name)} · ${x.st==="uploading"?"Uploading…":x.st==="error"?"Failed: "+esc(x.err):"Ready"}</small><button class="btn line sm" data-rm="${i}" type="button">Remove</button></div>
  <div class="form" style="margin:0;padding:0"><label>Title<input data-i="${i}" data-k="title" value="${esc(x.title)}"></label><label>Type${sel(TYPES,x.type,i,"type")}</label><label>Level${sel(LEVELS,x.level,i,"level")}</label><label>Free for everyone<input type="checkbox" data-i="${i}" data-k="free" ${x.free?"checked":""}></label></div></div>`).join("")}
+
 const PAGES={
 students:["Student list",()=>{
   const att=id=>lessons.filter(l=>l.studentId===id&&l.status==="attended").length;
-  return `<label>Search<input id="q" placeholder="Type a name or email"></label><div id="list">${students.length?students.map(s=>`<div class="row" data-s="${esc((s.name+s.email).toLowerCase())}"><div><strong>${esc(s.name)}</strong><small>${esc(s.email)} · ${esc(s.goal||"")} · ${att(s.id)} lessons attended</small></div>
+  return `<label>Search<input id="q" placeholder="Type a name or email"></label><div id="list">${students.length?students.map(s=>`<div class="row" data-s="${esc((s.name+" "+s.email).toLowerCase())}"><div><strong>${esc(s.name)}</strong><small>${esc(s.email)} · ${esc(s.goal||"")} · ${att(s.id)} lessons attended</small></div>
    <div class="acts">${btn("prog",s.id,"Record progress")}</div></div>`).join(""):empty("No students yet","Students appear here after they create an account.")}</div>`},
- ()=>{const q=$("q");if(q)q.oninput=()=>document.querySelectorAll("[data-s]").forEach(r=>r.hidden=!r.dataset.s.includes(q.value.toLowerCase()))}],
+ ()=>{const q=$("q");if(q)q.oninput=()=>document.querySelectorAll("[data-s]").forEach(r=>r.hidden=!r.dataset.s.includes(q.value.trim().toLowerCase()))}],
+
 timetable:["Weekly timetable",()=>{
   const days=[...Array(7)].map((_,i)=>{const d=new Date(week);d.setDate(d.getDate()+i);return d});
-  return `<form class="form" id="slotF"><label>Date<input type="date" id="sd" required></label><label>Time<input type="time" id="st" required></label>
+  const today=new Date(),todayS=today.toDateString();
+  const vis=lessons.filter(l=>showC||l.status!=="cancelled");
+  return `<form class="form" id="slotF"><label>Date<input type="date" id="sd" required min="${iso(today)}" value="${iso(today)}"></label><label>Time<input type="time" id="st" required></label>
   <label>Length<select id="sl"><option>25</option><option selected>45</option></select></label>
   <label>Type<select id="sy"><option>Trial lesson</option><option selected>Single lesson</option><option>Monthly plan lesson</option></select></label>
   <label>Student (optional)<select id="ss"><option value="">Open slot</option>${opts()}</select></label>
-  <label>Meeting link<input id="sm" type="url" placeholder="https://meet.google.com/…"></label>
+  <label>Meeting link<input id="sm" type="url" required placeholder="https://meet.google.com/…" value="${esc(lastLink())}"></label>
   <button class="btn">Add to timetable</button><p class="msg full" id="m"></p></form>
-  <div class="nav2">${btn("prev","","Previous week")}<strong>${fd(days[0])} – ${fd(days[6])}</strong>${btn("next","","Next week")}${btn("today","","This week")}</div>
-  <div class="week">${days.map(d=>`<div class="day"><h3>${fd(d)}</h3>${lessons.filter(l=>T(l).toDateString()===d.toDateString()).map(l=>`<div class="slot ${l.status==="open"?"open":""}"><strong>${ft(T(l))}</strong> ${l.duration}m<br>${esc(l.studentName||"Open")}</div>`).join("")}</div>`).join("")}</div>`},
- ()=>{$("slotF").onsubmit=async e=>{e.preventDefault();const s=$("ss").value;
-   const ml=$("sm").value.trim();if(ml&&!/^https:\/\//.test(ml)){$("m").className="msg err";$("m").textContent="The meeting link must start with https://";return}
+  <div class="nav2">${btn("prev","","Previous week")}<strong>${fd(days[0])} – ${fd(days[6])}</strong>${btn("next","","Next week")}${btn("today","","This week")}
+  <label class="chk"><input type="checkbox" id="sc" ${showC?"checked":""}> Show cancelled</label></div>
+  <p><small>Times are shown in your device's time zone${TZ?" ("+esc(TZ)+")":""}.</small></p>
+  <div class="week">${days.map(d=>`<div class="day ${d.toDateString()===todayS?"today":""}"><h3>${fd(d)}${d.toDateString()===todayS?" · Today":""}</h3>${vis.filter(l=>T(l).toDateString()===d.toDateString()).map(l=>`<div class="slot ${esc(l.status)}"><strong>${ft(T(l))}</strong> ${l.duration}m<span class="st">${ST[l.status]||esc(l.status)}</span>${esc(l.studentName||"Open")}${l.status!=="cancelled"?`<div class="acts">${joinBtn(l)}${isLive(l)?linkBtn(l):""}</div>`:""}</div>`).join("")}</div>`).join("")}</div>`},
+ ()=>{
+  $("sc").onchange=e=>{showC=e.target.checked;show("timetable")};
+  $("slotF").onsubmit=e=>{e.preventDefault();busy(sub(e.target),async()=>{
+   const s=$("ss").value,ml=$("sm").value.trim();
+   if(!ml)throw new Error("Add a meeting link for this lesson.");
+   if(!okUrl(ml))throw new Error("The meeting link must start with https://");
+   const start=new Date($("sd").value+"T"+$("st").value),dur=+$("sl").value;
+   if(isNaN(start))throw new Error("Choose a valid date and time.");
+   if(start<Date.now())throw new Error("That time has already passed. Choose a future time.");
+   const end=+start+dur*60000;
+   const clash=lessons.find(l=>l.status!=="cancelled"&&+T(l)<end&&+start<+T(l)+l.duration*60000);
+   if(clash)throw new Error("This overlaps your lesson on "+fd(T(clash))+" at "+ft(T(clash))+".");
    const lr=doc(collection(db,"lessons"));
-   await setDoc(lr,{teacherId:uid,teacherName:me.name,studentId:s,studentName:nameOf(s),start:Timestamp.fromDate(new Date($("sd").value+"T"+$("st").value)),duration:+$("sl").value,type:$("sy").value,status:s?"booked":"open"});
-   if(ml)await setDoc(doc(db,"lessonLinks",lr.id),{teacherId:uid,meetLink:ml});
-   await refresh("Added to your timetable.")}}],
+   await setDoc(lr,{teacherId:uid,teacherName:me.name,studentId:s,studentName:nameOf(s),start:Timestamp.fromDate(start),duration:dur,type:$("sy").value,status:s?"booked":"open"});
+   await setDoc(doc(db,"lessonLinks",lr.id),{teacherId:uid,meetLink:ml});
+   saveLast(ml);
+   await refresh("Added to your timetable.")})}}],
+
 upcoming:["Upcoming lessons",()=>{const now=Date.now();
   const l=lessons.filter(x=>T(x)>=now&&["open","booked"].includes(x.status));
-  return l.length?l.map(x=>lessonRow(x,btn("cancelled",x.id,"Cancel"))).join(""):empty("No upcoming lessons","Add slots in Weekly timetable.")}],
-materials:["Learning materials",()=>`<div class="form"><label class="full" style="border:2px dashed #0005;border-radius:12px;padding:22px;text-align:center;cursor:pointer">Drop files here or click to choose (PDF, Word, audio, images; up to 25 MB each)<input type="file" id="mf" multiple hidden></label>
+  const missing=l.filter(x=>!linkOf(x)).length;
+  return `<p class="msg" id="m"></p>`+(missing?`<div class="row"><div><strong>${missing} upcoming lesson${missing>1?"s":""} without a meeting link</strong><small>Add one link to all of them at once, or use Add link on each lesson.</small></div><div class="acts">${btn("bulk","","Add link to all",false)}</div></div>`:"")+
+  (l.length?l.map(x=>lessonRow(x,linkBtn(x)+btn("cancelled",x.id,x.status==="booked"?"Cancel lesson":"Remove slot"))).join(""):empty("No upcoming lessons","Add slots in Weekly timetable."))}],
+
+materials:["Learning materials",()=>`<div class="form"><label class="full" style="border:2px dashed color-mix(in srgb,var(--ink) 35%,transparent);border-radius:12px;padding:22px;text-align:center;cursor:pointer">Drop files here or click to choose (PDF, Word, audio, images; up to 25 MB each)<input type="file" id="mf" multiple hidden accept=".pdf,.doc,.docx,.mp3,.m4a,.wav,.ogg,.aac,.jpg,.jpeg,.png,.webp,.gif"></label>
   <label>Share with<select id="ms"><option value="">All my students</option>${opts()}</select></label>
   <button class="btn" id="upAll" type="button">Upload all</button><p class="msg full" id="m"></p></div><div id="qL"></div><form class="form" id="lkF"><label class="full"><strong>Or add a recording link (unlisted YouTube or Vimeo)</strong></label><label>Title<input id="lt" required></label><label>Link<input id="lu" type="url" placeholder="https://…" required></label><button class="btn">Add link</button></form>
   <h2 style="margin:22px 0 4px;font-size:1.3rem">Uploaded</h2>`+
   (mats.length?mats.map(m=>`<div class="row"><div><strong>${esc(m.title)}</strong> <span class="pill">${esc(m.type||"Notes")}</span> <span class="pill">${esc(m.level||"All levels")}</span>${m.free?' <span class="pill">Free</span>':""}<small>${m.studentName?esc(m.studentName):"All my students"}</small></div>${m.link?`<a class="btn line sm" href="${esc(m.link)}" target="_blank" rel="noopener">Watch</a>`:btn("open",m.id,"Open")}</div>`).join(""):empty("Nothing uploaded","Notes and exercises you upload show up for your students.")),
  ()=>{drawQ();
-  $("lkF").onsubmit=async e=>{e.preventDefault();const u=$("lu").value.trim();if(!/^https:\/\//.test(u)){$("m").className="msg err";$("m").textContent="The link must start with https://";return}const s=$("ms").value;
-   await addDoc(collection(db,"materials"),{teacherId:uid,title:$("lt").value.trim(),type:"Recording",level:"All levels",free:false,link:u,studentId:s,studentName:nameOf(s),createdAt:serverTimestamp()});await refresh("Link added.")};
-  $("mf").onchange=e=>{[...e.target.files].forEach(f=>{if(f.size>25*1048576){$("m").className="msg err";$("m").textContent=f.name+" is over 25 MB and was skipped.";return}
-    qu.push({f,title:f.name.replace(/\.[^.]+$/,"").replace(/[_-]+/g," "),type:"Notes",level:"All levels",free:false,st:"ready"})});e.target.value="";drawQ()};
+  $("lkF").onsubmit=e=>{e.preventDefault();busy(sub(e.target),async()=>{
+   const u=$("lu").value.trim();if(!/^https:\/\//.test(u))throw new Error("The link must start with https://");
+   const s=$("ms").value;
+   await addDoc(collection(db,"materials"),{teacherId:uid,title:$("lt").value.trim(),type:"Recording",level:"All levels",free:false,link:u,studentId:s,studentName:nameOf(s),createdAt:serverTimestamp()});
+   await refresh("Link added.")})};
+  $("mf").onchange=e=>{const skipped=[];
+    [...e.target.files].forEach(f=>{
+     if(!OKFILE.test(f.name)){skipped.push(f.name+" (file type not allowed)");return}
+     if(f.size>25*1048576){skipped.push(f.name+" (over 25 MB)");return}
+     qu.push({f,title:f.name.replace(/\.[^.]+$/,"").replace(/[_-]+/g," "),type:"Notes",level:"All levels",free:false,st:"ready"})});
+    e.target.value="";drawQ();
+    if(skipped.length)say("Skipped: "+skipped.join(", "),true)};
   $("qL").oninput=e=>{const t=e.target,i=t.dataset.i;if(i!==undefined)qu[i][t.dataset.k]=t.type==="checkbox"?t.checked:t.value};
   $("qL").onclick=e=>{const b=e.target.closest("[data-rm]");if(b){qu.splice(+b.dataset.rm,1);drawQ()}};
-  $("upAll").onclick=async()=>{const todo=qu.filter(x=>x.st!=="done");if(!todo.length)return;$("upAll").disabled=true;const s=$("ms").value;
+  $("upAll").onclick=e=>busy(e.currentTarget,async()=>{
+   const todo=qu.filter(x=>x.st!=="done");if(!todo.length){say("Choose at least one file first.",true);return}
+   const s=$("ms").value;
    for(const x of todo){x.st="uploading";drawQ();
     try{const tok=await auth.currentUser.getIdToken();
-     const up=await fetch(WORKER_URL+"/upload",{method:"PUT",headers:{Authorization:"Bearer "+tok,"X-File-Name":encodeURIComponent(x.f.name),"Content-Type":x.f.type||"application/octet-stream"},body:x.f});
+     const up=await fetch(WORKER+"/upload",{method:"PUT",headers:{Authorization:"Bearer "+tok,"X-File-Name":encodeURIComponent(x.f.name),"Content-Type":x.f.type||"application/octet-stream"},body:x.f});
      if(!up.ok)throw new Error((await up.json().catch(()=>({}))).error||up.status);
      const {key}=await up.json();
      await addDoc(collection(db,"materials"),{teacherId:uid,title:x.title.trim()||x.f.name,type:x.type,level:x.level,free:x.free,fileKey:key,fileName:x.f.name,studentId:s,studentName:nameOf(s),createdAt:serverTimestamp()});
      x.st="done"}catch(err){x.st="error";x.err=err.message}
     drawQ()}
    const ok=qu.filter(x=>x.st==="done").length;qu=qu.filter(x=>x.st!=="done");
-   await load();show("materials");$("m").className="msg ok";$("m").textContent=ok+" uploaded"+(qu.length?", "+qu.length+" failed. Fix and try again.":".")}}],
+   await load();show("materials");say(ok+" uploaded"+(qu.length?", "+qu.length+" failed. Fix and try again.":"."),qu.length>0)})}],
+
 progress:["Student progress",()=>`<form class="form" id="pF"><label>Student<select id="ps" required><option value="">Choose…</option>${opts(pick)}</select></label>
-  <label>Level<select id="pl"><option>Beginner (A1)</option><option>Elementary (A2)</option><option>Intermediate (B1)</option><option>Upper intermediate (B2)</option></select></label>
+  <label>Level<select id="pl">${LEVELS.slice(1).map(l=>`<option>${l}</option>`).join("")}</select></label>
   <label class="full">Topic covered<input id="pt" required></label><label class="full">Notes (strengths, what to practise)<textarea id="pn"></textarea></label>
   <button class="btn">Save progress</button><p class="msg full" id="m"></p></form>`+
   (prog.length?prog.slice(0,25).map(p=>`<div class="row"><div><strong>${esc(p.studentName)}</strong> <span class="pill">${esc(p.level)}</span><small>${fd(p.date.toDate())} · ${esc(p.topic)}<br>${esc(p.notes)}</small></div></div>`).join(""):empty("No records yet","Record what each student covered after a lesson.")),
- ()=>{$("pF").onsubmit=async e=>{e.preventDefault();const s=$("ps").value;if(!s)return;
-   await addDoc(collection(db,"progress"),{teacherId:uid,studentId:s,studentName:nameOf(s),level:$("pl").value,topic:$("pt").value.trim(),notes:$("pn").value.trim(),date:Timestamp.now()});
-   pick="";await refresh("Progress saved.")}}],
+ ()=>{$("pF").onsubmit=e=>{e.preventDefault();busy(sub(e.target),async()=>{
+   const s=$("ps").value;if(!s)throw new Error("Choose a student first.");
+   const t=$("pt").value.trim();if(!t)throw new Error("Write the topic covered.");
+   await addDoc(collection(db,"progress"),{teacherId:uid,studentId:s,studentName:nameOf(s),level:$("pl").value,topic:t,notes:$("pn").value.trim(),date:Timestamp.now()});
+   pick="";await refresh("Progress saved.")})}}],
+
 history:["Attendance and lesson history",()=>{const now=Date.now();
-  const l=lessons.filter(x=>T(x)<now).reverse();
+  // Past slots nobody booked are left out so they don't clutter the list
+  const l=lessons.filter(x=>T(x)<now&&x.status!=="open").reverse();
   const n=s=>l.filter(x=>x.status===s).length;
-  return `<p><strong>${n("attended")}</strong> attended · <strong>${n("absent")}</strong> absent · <strong>${n("cancelled")}</strong> cancelled</p>`+
+  return `<p><strong>${n("attended")}</strong> attended · <strong>${n("absent")}</strong> absent · <strong>${n("cancelled")}</strong> cancelled</p><p class="msg" id="m"></p>`+
   (l.length?l.map(x=>lessonRow(x,x.status==="booked"?btn("attended",x.id,"Attended",false)+btn("absent",x.id,"Absent"):"")).join(""):empty("No past lessons","Completed lessons will be listed here."))}]
 };
-async function refresh(msg){await load();show(cur);if(msg&&$("m")){$("m").className="msg ok";$("m").textContent=msg}}
+
+async function refresh(msg){await load();show(cur);if(msg)say(msg)}
 function show(k){cur=k;const [t,h,b]=PAGES[k];$("title").textContent=t;view.innerHTML=h();if(b)b();
   $("side").querySelectorAll("button[data-k]").forEach(x=>x.setAttribute("aria-current",x.dataset.k===k))}
+
+// Ask for a link and save it for one or more lessons
+async function setLinks(ids,current,question){
+  const v=prompt(question,current||lastLink());
+  if(v===null)return;
+  const u=v.trim();
+  if(!u)throw new Error("Paste a meeting link to save.");
+  if(!okUrl(u))throw new Error("The meeting link must start with https://");
+  await Promise.all(ids.map(id=>setDoc(doc(db,"lessonLinks",id),{teacherId:uid,meetLink:u})));
+  saveLast(u);
+  await refresh(ids.length>1?"Link added to "+ids.length+" lessons.":"Meeting link saved.");
+}
+
 view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const a=b.dataset.act,id=b.dataset.id;
   if(a==="prev"||a==="next"){week.setDate(week.getDate()+(a==="next"?7:-7));return show("timetable")}
   if(a==="today"){week=mon(new Date());return show("timetable")}
   if(a==="prog"){pick=id;return show("progress")}
-  if(a==="open"){const w=window.open("","_blank");try{const r=await fetch(WORKER_URL+"/file/"+id,{headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});if(!r.ok)throw 0;w.location=URL.createObjectURL(await r.blob())}catch{w.close();alert("Could not open the file.")}return}
-  if(a==="cancelled"&&SERVER_URL){if(!confirm("Cancel this lesson? A booked student gets their lesson back."))return;b.disabled=true;try{await staffCancel(id);await refresh("Lesson cancelled.")}catch(x){alert(x.message);b.disabled=false}return}
-  b.disabled=true;await updateDoc(doc(db,"lessons",id),{status:a});await refresh()};
+  if(a==="link"){
+    const l=lessons.find(x=>x.id===id);if(!l)return;
+    return busy(b,()=>setLinks([id],linkOf(l),"Meeting link for "+fd(T(l))+" at "+ft(T(l))+" (starts with https://):"))}
+  if(a==="bulk"){
+    const ids=lessons.filter(x=>isLive(x)&&!linkOf(x)).map(x=>x.id);
+    if(!ids.length)return;
+    return busy(b,()=>setLinks(ids,"","Meeting link to add to "+ids.length+" upcoming lesson"+(ids.length>1?"s":"")+" that have none (starts with https://):"))}
+  if(a==="open"){
+    const w=window.open("","_blank");
+    try{
+      const r=await fetch(WORKER+"/file/"+id,{headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});
+      if(!r.ok)throw new Error("bad response");
+      const u=URL.createObjectURL(await r.blob());w.location=u;setTimeout(()=>URL.revokeObjectURL(u),120000)
+    }catch{if(w)w.close();say("Could not open the file. Check your connection and allow pop-ups for this site.",true)}
+    return}
+  if(a==="cancelled"){
+    const l=lessons.find(x=>x.id===id)||{};
+    if(l.status==="booked"){
+      // A booked lesson must go through the server so the student gets their lesson back
+      if(!SERVER_URL){say("Cancelling a booked lesson needs the server, which is not set up.",true);return}
+      if(!confirm("Cancel this lesson? The student gets their lesson back."))return;
+      return busy(b,async()=>{const old=b.textContent;b.textContent="Cancelling…";say("Cancelling… the server can take up to a minute to wake up. Please don't click again.");
+        try{await staffCancel(id);await refresh("Lesson cancelled.")}finally{b.textContent=old}})}
+    if(!confirm("Remove this open slot?"))return;
+    return busy(b,async()=>{await updateDoc(doc(db,"lessons",id),{status:"cancelled"});await refresh("Slot removed.")})}
+  if(!["attended","absent"].includes(a))return;
+  busy(b,async()=>{await updateDoc(doc(db,"lessons",id),{status:a});await refresh()})};
+
+function fatal(x){
+  $("title").textContent="Could not load your page";
+  view.innerHTML=`<div class="empty"><strong></strong><p>Check your internet connection and try again. If it keeps happening, the usual causes are: Firestore rules not published, the Firestore database not created, a missing file in the js folder, or wrong Firebase settings.</p><button class="btn" type="button" onclick="location.reload()">Try again</button></div>`;
+  view.querySelector("strong").textContent=String((x&&(x.code||x.message))||x);
+}
+
 onAuthStateChanged(auth,async u=>{
   if(!u)return location.href="auth.html";
-  uid=u.uid;const s=await getDoc(doc(db,"users",uid));me=s.exists()?s.data():{role:"student"};
-  if(me.role!=="teacher")return location.href=HOME[me.role]||HOME.student;
-  await load();
-  Object.entries(PAGES).forEach(([k,v])=>{const b=document.createElement("button");b.dataset.k=k;b.textContent=v[0];b.onclick=()=>show(k);$("side").appendChild(b)});
-  const o=document.createElement("button");o.className="out";o.textContent="Log out";o.onclick=()=>signOut(auth).then(()=>location.href="index.html");$("side").appendChild(o);
-  show("timetable");
+  try{
+    uid=u.uid;const s=await getDoc(doc(db,"users",uid));me=s.exists()?s.data():{role:"student"};
+    if(me.role!=="teacher")return location.href=HOME[me.role]||HOME.student;
+    await load();
+    Object.entries(PAGES).forEach(([k,v])=>{const b=document.createElement("button");b.dataset.k=k;b.textContent=v[0];b.onclick=()=>show(k);$("side").appendChild(b)});
+    const o=document.createElement("button");o.className="out";o.textContent="Log out";o.onclick=()=>signOut(auth).then(()=>location.href="index.html");$("side").appendChild(o);
+    show("timetable");
+    // Wake the Render server early so cancelling a lesson is quick later
+    if(SERVER_URL)fetch(SERVER_URL+"/",{mode:"no-cors"}).catch(()=>{});
+  }catch(x){fatal(x)}
 });
 </script><script>
 // Phone menu: turns the side menu into a top bar with a Menu button
