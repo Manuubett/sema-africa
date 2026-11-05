@@ -1,6 +1,7 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#12355B">
+<meta name="robots" content="noindex, nofollow">
 <title>My learning – SemaAfrica</title>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Nunito+Sans:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
@@ -93,8 +94,8 @@ h3.sec{font:700 1.2rem var(--display);margin:26px 0 10px}
 label{display:grid;gap:6px;font-weight:700}
 input[type=text],input[type=tel],input:not([type]){width:100%;min-height:48px;padding:10px 14px;border:2px solid var(--line);border-radius:12px;
   background:var(--card);color:var(--ink);font:400 1rem var(--body)}
-input[type=checkbox]{width:22px;height:22px;accent-color:var(--brand);flex:none}
-.form label:has(input[type=checkbox]){display:flex;gap:12px;align-items:center;min-height:44px;font-weight:600}
+input[type=checkbox],input[type=radio]{width:22px;height:22px;accent-color:var(--brand);flex:none}
+.form label:has(input[type=checkbox]),.form label:has(input[type=radio]){display:flex;gap:12px;align-items:center;min-height:44px;font-weight:600}
 
 /* bottom tabs */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:30;height:calc(var(--tab-h) + env(safe-area-inset-bottom,0px));
@@ -151,7 +152,7 @@ import {auth,db,HOME,WORKER_URL} from "./js/firebase.js";
 import * as FB from "./js/firebase.js";
 const SERVER_URL=(FB.SERVER_URL||"").replace(/\/+$/,"");
 import {onAuthStateChanged,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {doc,getDoc,updateDoc,collection,query,where,getDocs,writeBatch} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {doc,getDoc,updateDoc,addDoc,collection,query,where,getDocs,writeBatch,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 const $=id=>document.getElementById(id), view=$("view");
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const dt=v=>v&&v.toDate?v.toDate():null;
@@ -160,13 +161,23 @@ const fd=v=>{const d=dt(v);return d?d.toLocaleDateString([],{day:"numeric",month
 const money=(a,c)=>(c==="KES"?"KES ":"$")+Number(a||0).toLocaleString();
 const empty=(t,p,a)=>`<div class="empty"><strong>${t}</strong><p>${p}</p>${a?`<a class="btn" href="${a[1]}"${a[1].length>1&&a[1][0]==="#"?` data-go="${a[1].slice(1)}"`:""}>${a[0]}</a>`:""}</div>`;
 const flash=(t,ok=true)=>{$("flash").className="msg "+(ok?"ok":"err");$("flash").textContent=t;if(t)scrollTo({top:0,behavior:"smooth"})};
-let uid,me,enr=[],mine=[],openSlots=[],prog=[],pays=[],mats=[],catalog=[],cur="overview";
+let uid,me,enr=[],mine=[],openSlots=[],prog=[],pays=[],mats=[],catalog=[],cur="overview",
+    quizzes=[],attempts=[],qz=null,qAns=[],qDone=null,qErr=false;
 async function load(){
   const q=(c,f,v)=>getDocs(query(collection(db,c),where(f,"==",v))).then(s=>s.docs.map(d=>({id:d.id,...d.data()})));
   const [e,m,o,p,y,m1,m2,cs]=await Promise.all([q("enrollments","userId",uid),q("lessons","studentId",uid),q("lessons","status","open"),q("progress","studentId",uid),q("payments","userId",uid),q("materials","studentId",uid),q("materials","studentId",""),getDocs(collection(db,"courses"))]);
   enr=e;mine=m;catalog=cs.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.active!==false).sort((a,b)=>a.usd-b.usd);prog=p.sort((a,b)=>dt(b.date)-dt(a.date));pays=y.sort((a,b)=>dt(b.createdAt)-dt(a.createdAt));
   openSlots=o.filter(l=>dt(l.start)>new Date()).sort((a,b)=>dt(a.start)-dt(b.start));
   const seen={};mats=[...m1,...m2].filter(x=>!seen[x.id]&&(seen[x.id]=1)).sort((a,b)=>(dt(b.createdAt)||0)-(dt(a.createdAt)||0));
+  // Quizzes: two queries (assigned to me, and for all students), as the Firestore rules require.
+  // A failure here must not break the rest of the page.
+  qErr=false;
+  try{
+    const [qa,qb2,qc]=await Promise.all([q("quizzes","studentId",uid),q("quizzes","studentId",""),q("quizAttempts","studentId",uid)]);
+    const sn={};
+    quizzes=[...qa,...qb2].filter(x=>!sn[x.id]&&(sn[x.id]=1)).sort((x,y)=>(dt(y.createdAt)||0)-(dt(x.createdAt)||0));
+    attempts=qc.sort((x,y)=>(dt(y.date)||0)-(dt(x.date)||0));
+  }catch{qErr=true;quizzes=[];attempts=[]}
   await Promise.all(mine.filter(l=>l.status==="booked"&&dt(l.start).getTime()>Date.now()-45*60000).map(async l=>{
     try{const s=await getDoc(doc(db,"lessonLinks",l.id));if(s.exists())l.meetLink=s.data().meetLink}catch{}}));
 }
@@ -203,6 +214,13 @@ progress:["Progress",()=>{const att=mine.filter(l=>l.status==="attended").length
   (prog.length?prog.map(p=>`<div class="row"><div><strong>${esc(p.topic)}</strong> <span class="pill">${esc(p.level)}</span><small>${fd(p.date)}${p.notes?" · "+esc(p.notes):""}</small></div></div>`).join(""):empty("Nothing recorded yet","After each lesson your teacher adds notes on how you are doing."))}],
 notes:["Notes and exercises",()=>{const l=mats.filter(m=>m.type!=="Recording");return l.length?l.map(matRow).join(""):empty("No materials yet","Downloads from your teacher will appear here.")}],
 recordings:["Recorded lessons",()=>{const l=mats.filter(m=>m.type==="Recording");return l.length?l.map(matRow).join(""):empty("No recordings yet","Replay links for your classes will appear here.")}],
+quizzes:["Quizzes",()=>{
+  if(qDone)return qResult();
+  if(qz)return qTake();
+  if(qErr)return empty("Quizzes could not be loaded","Please try again later. If it keeps happening, tell your teacher.");
+  const l=quizzes.filter(z=>(z.questions||[]).length);
+  return l.length?l.map(z=>{const a=attempts.find(x=>x.quizId===z.id);
+    return `<div class="row"><div><strong>${esc(z.title)}</strong> <span class="pill">${esc(z.level||"All levels")}</span><small>${z.questions.length} question${z.questions.length===1?"":"s"}${a?" · Last score "+a.score+"/"+a.total:""}</small></div><button class="btn sm" data-act="qstart" data-id="${z.id}">${a?"Retake":"Start"}</button></div>`}).join(""):empty("No quizzes yet","Quizzes from your teacher will appear here.")}],
 reminders:["Class reminders",()=>`<p>We remind you before each class so you never miss one.</p>
   <div class="form"><label><span style="display:contents"><input type="checkbox" id="rmE" ${me.remindEmail!==false?"checked":""}> Email me${me.email?" at "+esc(me.email):""}</span></label>
   <label><span style="display:contents"><input type="checkbox" id="rmW" ${me.remindWhatsapp?"checked":""}> Send me a WhatsApp message</span></label>
@@ -221,6 +239,33 @@ const ACT={
    await w.commit();await load();show("upcoming");flash("Booked! Your meeting link is below once your teacher adds it.")}
   catch(x){await load();show("book");flash("Sorry, that time was just taken or is no longer available. Please pick another.",false)}}
 };
+
+/* ── Quizzes ── */
+const same=(a,c)=>a.length===c.length&&c.every(x=>a.includes(x));
+const pk=(q,a)=>a&&a.length?a.map(i=>esc(q.options[i]??"?")).join(", "):"No answer";
+function qTake(){
+  return `<p><small>${esc(qz.title)} · ${qz.questions.length} question${qz.questions.length===1?"":"s"}</small></p>`+
+  qz.questions.map((q,i)=>`<div class="card" style="margin-bottom:12px"><strong>${i+1}. ${esc(q.text)}</strong><small>${q.multi?"Choose all that apply":"Choose one"}</small><div class="form" style="margin-top:10px">${q.options.map((o,j)=>`<label><input type="${q.multi?"checkbox":"radio"}" name="q${i}" data-qa="${i}:${j}" ${qAns[i].includes(j)?"checked":""}> ${esc(o)}</label>`).join("")}</div></div>`).join("")+
+  `<p class="msg" id="qm"></p><div class="acts"><button class="btn" data-act="qsubmit">Submit answers</button><button class="btn line" data-act="qquit">Cancel</button></div>`}
+function qResult(){const {z,score,answers}=qDone;
+  return `<div class="card hero"><small>${esc(z.title)}</small><h2>${score} / ${z.questions.length}</h2><button class="btn" data-act="qback">Back to quizzes</button></div><h3 class="sec">Review</h3>`+
+  z.questions.map((q,i)=>{const a=answers[i]||[],ok=same(a,q.correct);
+    return `<div class="row" style="display:block"><strong>${i+1}. ${esc(q.text)}</strong> ${ok?"✓":"✗"}<small>Your answer: ${pk(q,a)}${ok?"":" · Correct: "+pk(q,q.correct)}</small></div>`}).join("")}
+Object.assign(ACT,{
+  async qstart(b){qz=quizzes.find(x=>x.id===b.dataset.id);if(!qz)return;qAns=qz.questions.map(()=>[]);qDone=null;show("quizzes")},
+  async qquit(b){if(!confirm("Leave this quiz? Your answers will not be saved.")){b.disabled=false;return}qz=null;show("quizzes")},
+  async qback(){qz=null;qDone=null;show("quizzes")},
+  async qsubmit(b){const z=qz,un=qAns.findIndex(a=>!a.length);
+    if(un>=0){$("qm").className="msg err";$("qm").textContent="Answer question "+(un+1)+" first.";b.disabled=false;return}
+    const score=z.questions.filter((q,i)=>same(qAns[i],q.correct)).length,total=z.questions.length;
+    // answers are saved as a map {0:[1],1:[0,2]} because Firestore does not allow arrays inside arrays
+    const answers=Object.fromEntries(qAns.map((a,i)=>[i,[...a].sort((x,y)=>x-y)]));
+    await addDoc(collection(db,"quizAttempts"),{quizId:z.id,quizTitle:z.title,teacherId:z.teacherId,studentId:uid,studentName:me.name,score,total,answers,questions:z.questions,date:serverTimestamp()});
+    qDone={z,score,answers};qz=null;await load();show("quizzes")}
+});
+view.addEventListener("change",e=>{const a=e.target.dataset.qa;if(!qz||!a)return;
+  const [i,j]=a.split(":").map(Number),q=qz.questions[i];
+  qAns[i]=q.multi?(e.target.checked?[...new Set([...qAns[i],j])]:qAns[i].filter(x=>x!==j)):[j]});
 
 /* ── M-Pesa payment (server decides the price; the browser only shows it) ── */
 let payCourse=null,payId=null,payTimer=null,testMode=false,payAmt=0,payCode="";
@@ -308,7 +353,7 @@ const ICON={
   more:'<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>'
 };
 const TABS=[["overview","Home"],["book","Book"],["upcoming","Classes"],["progress","Progress"]];
-const MORE=["browse","courses","notes","recordings","reminders","payments"];
+const MORE=["quizzes","browse","courses","notes","recordings","reminders","payments"];
 function buildNav(){
   const t=$("tabs");
   t.innerHTML=TABS.map(([k,l])=>`<button type="button" data-k="${k}"><svg viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>${l}</button>`).join("")+
@@ -325,7 +370,7 @@ function drawMore(){
   $("moreBody").innerHTML=MORE.map(k=>`<button type="button" data-k="${k}" aria-current="${cur===k}">${PAGES[k][0]}</button>`).join("")+
     '<button type="button" class="out" data-out>Log out</button>';
 }
-function show(k){cur=k;const [t,h]=PAGES[k];$("title").textContent=t;view.innerHTML=h();
+function show(k){if(k!=="quizzes"){qz=null;qDone=null}cur=k;const [t,h]=PAGES[k];$("title").textContent=t;view.innerHTML=h();
   const inTabs=TABS.some(x=>x[0]===k);
   $("tabs").querySelectorAll("button[data-k]").forEach(x=>x.setAttribute("aria-current",x.dataset.k===k||(x.dataset.k==="more"&&!inTabs)));
   const n=credits(),c=$("chip");c.hidden=false;c.textContent=n+" lesson"+(n===1?"":"s")+" left";
