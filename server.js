@@ -43,9 +43,14 @@ app.use(cors({ origin: (o, cb) => {                                        // on
 app.use(express.json({ limit: '100kb' }));
 
 app.use('/api/payments', require('./routes/payments')(admin));
+app.use('/api/lessons', require('./routes/lessons')(admin));
+const reminders = require('./routes/reminders')(admin);
+app.use('/api/reminders', reminders);
+// Also check every 10 minutes while the server is awake (the timer service covers the times it is asleep)
+setInterval(() => reminders.run().catch(e => console.error('[reminders]', e.message)), 10 * 60 * 1000);
 
 // Health check only. Deliberately no endpoints that reveal env settings, database or file names.
-app.get('/api/health', (req, res) => res.json({ ok: true, service: 'semaafrica', mode: process.env.PAYMENTS_MODE || 'test', project: PROJECT_ID }));
+app.get('/api/health', (req, res) => res.json({ ok: true, service: 'semaafrica', mode: process.env.PAYMENTS_MODE || 'test', project: PROJECT_ID, cancelHours: Number(process.env.CANCEL_HOURS || 12) }));
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err, req, res, next) => { console.error('[error]', err.message); res.status(500).json({ error: 'Server error' }); });
