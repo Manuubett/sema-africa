@@ -31,6 +31,7 @@ console.log('Firebase project:', PROJECT_ID, PROJECT_ID === 'semiafrica' ? '' : 
 if (process.env.PAYMENTS_MODE === 'live') require('./providers/daraja').assertConfigured();   // stop at start-up if a setting is missing
 
 const app = express();
+app.disable('x-powered-by');
 const allowed = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
   .map(s => { try { return new URL(s).origin; } catch { return s.replace(/\/+$/, ''); } });   // tolerates a trailing slash or a path
 console.log('Allowed origins:', allowed.join(', ') || '(NONE SET: add ALLOWED_ORIGINS in Render)');
