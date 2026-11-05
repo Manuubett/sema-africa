@@ -66,13 +66,15 @@ courses:["Courses and pricing",()=>{const c=courses.find(x=>x.id===editC)||{};
   <label>Type<select id="ct">${["Trial","Single","Monthly"].map(t=>`<option ${c.type===t?"selected":""}>${t}</option>`).join("")}</select></label>
   <label>Lessons included<input id="cl" type="number" min="1" value="${c.lessons||1}"></label>
   <label>Minutes each<select id="cm"><option ${c.minutes==25?"selected":""}>25</option><option ${c.minutes==25?"":"selected"}>45</option></select></label>
-  <label>Price USD<input id="cu" type="number" min="0" step="0.01" required value="${c.usd??""}"></label>
-  <label>Price KES<input id="ck" type="number" min="0" required value="${c.kes??""}"></label>
+  <label>Price USD (0 = free trial)<input id="cu" type="number" min="0" step="0.01" value="${c.usd??0}"></label>
+  <label>Price KES (0 = free trial)<input id="ck" type="number" min="0" value="${c.kes??0}"></label>
   <button class="btn">${editC?"Save changes":"Add course"}</button>${editC?bt("canc","","Cancel edit"):""}</form>`+
-  (courses.length?courses.map(c=>`<div class="row"><div><strong>${esc(c.name)}</strong> <span class="pill">${esc(c.type)}</span> ${c.active===false?'<span class="pill">Hidden</span>':""}<small>${c.lessons} × ${c.minutes} min · $${c.usd} / KES ${Number(c.kes).toLocaleString()}</small></div>
+  (courses.length?courses.map(c=>`<div class="row"><div><strong>${esc(c.name)}</strong> <span class="pill">${esc(c.type)}</span> ${c.active===false?'<span class="pill">Hidden</span>':""}<small>${c.lessons} × ${c.minutes} min · ${Number(c.kes)>0?"$"+c.usd+" / KES "+Number(c.kes).toLocaleString():"Free"}</small></div>
    <div class="acts">${bt("editc",c.id,"Edit")}${bt("togc",c.id,c.active===false?"Show":"Hide")}${bt("delc",c.id,"Delete")}</div></div>`).join(""):empty("No courses yet","Add your first course, or load the four launch plans.")+bt("seed","","Add the four launch plans",false))},
  ()=>{$("cF").onsubmit=async e=>{e.preventDefault();
-   const d={name:$("cn").value.trim(),type:$("ct").value,lessons:+$("cl").value,minutes:+$("cm").value,usd:+$("cu").value,kes:+$("ck").value};
+   const d={name:$("cn").value.trim(),type:$("ct").value,lessons:+$("cl").value,minutes:+$("cm").value,usd:+$("cu").value||0,kes:+$("ck").value||0};
+   // Only a Trial can be free. Single and Monthly plans must have a price in both currencies.
+   if(d.type!=="Trial"&&(!(d.usd>0)||!(d.kes>0)))return flash("Single and Monthly plans need a price in USD and KES.",false);
    if(editC){await updateDoc(doc(db,"courses",editC),d)}else{await addDoc(collection(db,"courses"),{...d,active:true,createdAt:serverTimestamp()})}
    editC="";await refresh("Course saved. Prices update here only; the public page still shows fixed prices.")}}],
 
