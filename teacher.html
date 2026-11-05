@@ -23,7 +23,7 @@
 import {auth,db,HOME,WORKER_URL} from "./js/firebase.js";
 import * as FB from "./js/firebase.js";
 import {onAuthStateChanged,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {doc,getDoc,setDoc,collection,query,where,getDocs,addDoc,updateDoc,Timestamp,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {doc,getDoc,setDoc,collection,query,where,getDocs,addDoc,updateDoc,deleteDoc,Timestamp,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const SERVER_URL=(FB.SERVER_URL||"").trim().replace(/\/+$/,"");
 const WORKER=(WORKER_URL||"").trim().replace(/\/+$/,"");
@@ -137,7 +137,7 @@ materials:["Learning materials",()=>`<div class="form"><label class="full" style
   <label>Share with<select id="ms"><option value="">All my students</option>${opts()}</select></label>
   <button class="btn" id="upAll" type="button">Upload all</button><p class="msg full" id="m"></p></div><div id="qL"></div><form class="form" id="lkF"><label class="full"><strong>Or add a recording link (unlisted YouTube or Vimeo)</strong></label><label>Title<input id="lt" required></label><label>Link<input id="lu" type="url" placeholder="https://…" required></label><button class="btn">Add link</button></form>
   <h2 style="margin:22px 0 4px;font-size:1.3rem">Uploaded</h2>`+
-  (mats.length?mats.map(m=>`<div class="row"><div><strong>${esc(m.title)}</strong> <span class="pill">${esc(m.type||"Notes")}</span> <span class="pill">${esc(m.level||"All levels")}</span>${m.free?' <span class="pill">Free</span>':""}<small>${m.studentName?esc(m.studentName):"All my students"}</small></div>${m.link?`<a class="btn line sm" href="${esc(m.link)}" target="_blank" rel="noopener">Watch</a>`:btn("open",m.id,"Open")}</div>`).join(""):empty("Nothing uploaded","Notes and exercises you upload show up for your students.")),
+  (mats.length?mats.map(m=>`<div class="row"><div><strong>${esc(m.title)}</strong> <span class="pill">${esc(m.type||"Notes")}</span> <span class="pill">${esc(m.level||"All levels")}</span>${m.free?' <span class="pill">Free</span>':""}<small>${m.studentName?esc(m.studentName):"All my students"}</small></div><div class="acts">${m.link?`<a class="btn line sm" href="${esc(m.link)}" target="_blank" rel="noopener">Watch</a>`:btn("open",m.id,"Open")}${btn("delmat",m.id,"Delete")}</div></div>`).join(""):empty("Nothing uploaded","Notes and exercises you upload show up for your students.")),
  ()=>{drawQ();
   $("lkF").onsubmit=e=>{e.preventDefault();busy(sub(e.target),async()=>{
    const u=$("lu").value.trim();if(!/^https:\/\//.test(u))throw new Error("The link must start with https://");
@@ -213,6 +213,21 @@ view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const
     const ids=lessons.filter(x=>isLive(x)&&!linkOf(x)).map(x=>x.id);
     if(!ids.length)return;
     return busy(b,()=>setLinks(ids,"","Meeting link to add to "+ids.length+" upcoming lesson"+(ids.length>1?"s":"")+" that have none (starts with https://):"))}
+  if(a==="delmat"){
+    const m=mats.find(x=>x.id===id);if(!m)return;
+    if(!confirm('Delete "'+(m.title||"this item")+'"? Students will no longer see it. This cannot be undone.'))return;
+    return busy(b,async()=>{
+      let note="";
+      // Uploaded files are stored on the Worker, so ask it to remove the file too
+      if(m.fileKey){
+        try{
+          const r=await fetch(WORKER+"/file/"+id,{method:"DELETE",headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});
+          if(!r.ok&&r.status!==404)note=" The stored file could not be removed from the file server.";
+        }catch{note=" The stored file could not be removed from the file server."}
+      }
+      await deleteDoc(doc(db,"materials",id));
+      await refresh("Deleted."+note);
+    })}
   if(a==="open"){
     const w=window.open("","_blank");
     try{
