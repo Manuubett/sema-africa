@@ -46,6 +46,23 @@ async function route(req, env) {
     return Response.json({ key });
   }
 
+  if (req.method === "DELETE" && url.pathname.startsWith("/file/")) {
+    if (!tok) throw err("Log in first", 401);
+    const uid = uidOf(tok), id = url.pathname.slice(6);
+    const doc = await fsGet(env, tok, "materials/" + id);                 // must be readable by this person
+    if (field(doc, "teacherId") !== uid) {                                  // not the uploader: only an admin may
+      const me = await fsGet(env, tok, `users/${uid}`);
+      if (field(me, "role") !== "admin") throw err("Only the teacher who uploaded this file can delete it", 403);
+    }
+    // Delete the record first (Firestore rules decide), then the stored file
+    const r = await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/materials/${encodeURIComponent(id)}`,
+      { method: "DELETE", headers: { Authorization: "Bearer " + tok } });
+    if (!r.ok) throw err("Not allowed to delete this file", 403);
+    const key = field(doc, "fileKey");
+    if (key && key.startsWith(`materials/${field(doc, "teacherId")}/`)) await env.BUCKET.delete(key);
+    return Response.json({ ok: true });
+  }
+
   if (req.method === "GET" && url.pathname.startsWith("/file/")) {
     const doc = await fsGet(env, tok, "materials/" + url.pathname.slice(6)); // Firestore rules decide who may read (free files need no login)
     // Files shared with "all students" are for people who have a plan (the teacher, admins and free files are exempt)
@@ -71,7 +88,7 @@ export default {
     const allowed = env.ALLOWED_ORIGINS.split(",").map(s => s.trim());
     const o = req.headers.get("Origin") || "";
     const cors = { "Access-Control-Allow-Origin": allowed.includes(o) ? o : allowed[0], Vary: "Origin",
-      "Access-Control-Allow-Headers": "Authorization,Content-Type,X-File-Name", "Access-Control-Allow-Methods": "GET,PUT,OPTIONS" };
+      "Access-Control-Allow-Headers": "Authorization,Content-Type,X-File-Name", "Access-Control-Allow-Methods": "GET,PUT,DELETE,OPTIONS" };
     if (req.method === "OPTIONS") return new Response(null, { headers: cors });
     let res;
     try { res = await route(req, env); }
