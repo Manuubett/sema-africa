@@ -166,7 +166,7 @@ let uid,me,enr=[],mine=[],openSlots=[],prog=[],pays=[],mats=[],catalog=[],cur="o
 async function load(){
   const q=(c,f,v)=>getDocs(query(collection(db,c),where(f,"==",v))).then(s=>s.docs.map(d=>({id:d.id,...d.data()})));
   const [e,m,o,p,y,m1,m2,cs]=await Promise.all([q("enrollments","userId",uid),q("lessons","studentId",uid),q("lessons","status","open"),q("progress","studentId",uid),q("payments","userId",uid),q("materials","studentId",uid),q("materials","studentId",""),getDocs(collection(db,"courses"))]);
-  enr=e;mine=m;catalog=cs.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.active!==false).sort((a,b)=>a.usd-b.usd);prog=p.sort((a,b)=>dt(b.date)-dt(a.date));pays=y.sort((a,b)=>dt(b.createdAt)-dt(a.createdAt));
+  enr=e;mine=m;catalog=cs.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.active!==false).sort((a,b)=>(a.type==="Trial"?-1:0)-(b.type==="Trial"?-1:0)||a.usd-b.usd);prog=p.sort((a,b)=>dt(b.date)-dt(a.date));pays=y.sort((a,b)=>dt(b.createdAt)-dt(a.createdAt));
   openSlots=o.filter(l=>dt(l.start)>new Date()).sort((a,b)=>dt(a.start)-dt(b.start));
   const seen={};mats=[...m1,...m2].filter(x=>!seen[x.id]&&(seen[x.id]=1)).sort((a,b)=>(dt(b.createdAt)||0)-(dt(a.createdAt)||0));
   // Quizzes: two queries (assigned to me, and for all students), as the Firestore rules require.
@@ -193,18 +193,25 @@ overview:["Overview",()=>{const n=upcoming()[0],lv=prog[0];
   <div class="card hero"><small>Next class</small><h2>${n?fdt(n.start):"None booked"}</h2>${n?join(n):`<a class="btn" href="#" data-go="book">Book a lesson</a>`}</div>
   <div class="g"><div class="card"><small>Lessons left</small><h2>${credits()}</h2></div>
   <div class="card"><small>Your level</small><h2>${lv?esc(lv.level):"Not set"}</h2></div></div>
-  <div class="quick"><a class="btn line" href="#" data-go="browse">Browse courses</a></div>`+(enr.length?"":`<div style="margin-top:16px">`+empty("You are not enrolled yet","Choose a plan to unlock live classes, recordings and notes.",["Browse courses","#browse"])+`</div>`)}],
+  <div class="quick"><a class="btn line" href="#" data-go="browse">Browse courses</a></div>`+(enr.length?"":`<div style="margin-top:16px">`+empty("You are not enrolled yet","Start with a free trial lesson, or choose a plan to unlock live classes, recordings and notes.",["Browse courses","#browse"])+`</div>`)}],
 browse:["Browse courses",()=>{
   if(!catalog.length)return empty("No courses are published yet","New courses will appear here. Check back soon.");
   const own=id=>enr.some(e=>e.courseId===id&&e.status==="active"&&e.lessonsLeft>0&&(!e.expiresAt||dt(e.expiresAt)>new Date()));
-  return `<p>Pick a plan, pay with M-Pesa, then book your lessons right away.</p><div class="cat">${catalog.map(c=>`<article class="card course"><span class="pill">${esc(c.type)}</span><h3>${esc(c.name)}</h3>
-   <small>${c.lessons} lesson${c.lessons>1?"s":""} × ${c.minutes} min${c.type==="Monthly"?" · valid for 30 days":""}</small>
-   <div class="pr">KES ${Number(c.kes).toLocaleString()} <small>≈ $${c.usd}</small></div>${c.lessons>1?`<small>About $${(c.usd/c.lessons).toFixed(2)} per lesson</small>`:""}
-   ${own(c.id)?'<span class="pill">You have this plan</span>':""}<button class="btn" data-act="enrol" data-id="${c.id}">${own(c.id)?"Buy again":"Enrol with M-Pesa"}</button></article>`).join("")}</div>
+  const used=id=>enr.some(e=>e.courseId===id);   // a free trial can only be claimed once
+  const card=c=>{
+    if(c.type==="Trial")return `<article class="card course"><span class="pill">${esc(c.type)}</span><h3>${esc(c.name)}</h3>
+     <small>${c.lessons} lesson${c.lessons>1?"s":""} × ${c.minutes} min · no payment needed</small>
+     <div class="pr">Free</div>
+     ${used(c.id)?'<span class="pill">You have used your free trial</span>':`<button class="btn" data-act="free" data-id="${c.id}">Start free trial</button>`}</article>`;
+    return `<article class="card course"><span class="pill">${esc(c.type)}</span><h3>${esc(c.name)}</h3>
+     <small>${c.lessons} lesson${c.lessons>1?"s":""} × ${c.minutes} min${c.type==="Monthly"?" · valid for 30 days":""}</small>
+     <div class="pr">KES ${Number(c.kes).toLocaleString()} <small>≈ $${c.usd}</small></div>${c.lessons>1&&c.usd>0?`<small>About $${(c.usd/c.lessons).toFixed(2)} per lesson</small>`:""}
+     ${own(c.id)?'<span class="pill">You have this plan</span>':""}<button class="btn" data-act="enrol" data-id="${c.id}">${own(c.id)?"Buy again":"Enrol with M-Pesa"}</button></article>`};
+  return `<p>Try a free lesson first, or pick a plan and pay with M-Pesa. Then book your lessons right away.</p><div class="cat">${catalog.map(card).join("")}</div>
    <p style="margin-top:14px"><small>Paying from outside Kenya? Card payments are coming soon.</small></p>`}],
 courses:["My enrolled courses",()=>enr.length?enr.map(e=>`<div class="row"><div><strong>${esc(e.courseName)}</strong> <span class="pill">${esc(e.status)}</span><small>${e.lessonsLeft} of ${e.lessonsTotal} lessons left · started ${fd(e.startDate)}${e.expiresAt?" · ends "+fd(e.expiresAt):""}</small></div></div>`).join(""):empty("No courses yet","Once you enrol, your courses appear here.",["Browse courses","#browse"])],
 book:["Book a lesson",()=>{
-  if(!usable().length)return empty("You need an active plan to book","You have no lessons left. Choose a plan, or ask your teacher if you think this is a mistake.",["Browse courses","#browse"]);
+  if(!usable().length)return empty("You need an active plan to book","You have no lessons left. Start a free trial or choose a plan, or ask your teacher if you think this is a mistake.",["Browse courses","#browse"]);
   return `<p>You have <strong>${credits()}</strong> lesson${credits()===1?"":"s"} left. Booking uses one.</p>`+(openSlots.length?openSlots.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"Your teacher")} · ${esc(l.type)} · ${l.duration} min</small></div><button class="btn sm" data-act="book" data-id="${l.id}">Book this time</button></div>`).join(""):empty("No open times right now","Your teacher has not published new times yet. Check back soon."))}],
 upcoming:["Classes",()=>{const u=upcoming(),past=mine.filter(l=>!u.includes(l)&&dt(l.start)<new Date()).sort((a,b)=>dt(b.start)-dt(a.start));
   return (u.length&&SERVER_URL?`<p><small>Free to cancel or move a class up to ${cancelHrs} hours before it starts. Later changes use the lesson.</small></p>`:"")+(u.length?u.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"")} · ${esc(l.type)} · ${l.duration} min</small></div><div class="acts">${join(l)}${SERVER_URL?`<button class="btn line sm" data-act="resched" data-id="${l.id}">Reschedule</button><button class="btn line sm" data-act="cancelLesson" data-id="${l.id}">Cancel</button>`:""}</div></div>`).join(""):empty("No classes scheduled","Book a time and it will show here with your meeting link.",["Book a lesson","#"]))+
@@ -229,8 +236,20 @@ reminders:["Class reminders",()=>`<p>We remind you before each class so you neve
   <p style="margin-top:14px"><small>Reminders arrive about 24 hours and 1 hour before class, in your own time zone. We only message you about your classes.</small></p>`],
 payments:["Payment history",()=>pays.length?pays.map(p=>`<div class="row"><div><strong>${money(p.amount,p.currency)}</strong> · ${esc(p.courseName)}<small>${esc(p.method)} ${esc(p.reference||"")} · ${fd(p.createdAt)}</small></div></div>`).join(""):empty("No payments yet","Receipts for your plans will be listed here.")]
 };
+
+/* ── Free trial: no payment, the server enrols the student (one per student) ── */
+async function claimFree(c){
+  if(!c)return;
+  if(!SERVER_URL)throw new Error("Online enrolment is being set up. For now, please ask your teacher to enrol you.");
+  await api("/claim-free","POST",{courseId:c.id});
+  await load();show("book");
+  flash("Your free trial is ready. Pick a time below to book your lesson.");
+}
 const ACT={
- async enrol(b){b.disabled=false;openPay(catalog.find(c=>c.id===b.dataset.id))},
+ async enrol(b){b.disabled=false;const c=catalog.find(c=>c.id===b.dataset.id);if(!c)return;
+  if(c.type==="Trial")return claimFree(c);   // trials never go through payment
+  openPay(c)},
+ async free(b){try{await claimFree(catalog.find(c=>c.id===b.dataset.id))}finally{b.disabled=false}},
  async open(b){const w=window.open("","_blank");try{const r=await fetch(WORKER_URL+"/file/"+b.dataset.id,{headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.error||"Could not open that file.")}w.location=URL.createObjectURL(await r.blob())}catch(x){w.close();flash(x.message||"Could not open that file.",false)}b.disabled=false},
  async book(b){const l=openSlots.find(x=>x.id===b.dataset.id),e=usable()[0];if(!l||!e)return;if(!confirm("Book "+fdt(l.start)+"? This uses 1 lesson."))return;
   try{const w=writeBatch(db);
@@ -386,6 +405,9 @@ onAuthStateChanged(auth,async u=>{
   try{await load()}catch(e){flash("Could not load your data. Check your connection and refresh.",false)}
   buildNav();show("overview");
   const pl=sessionStorage.getItem("sema_plan");
-  if(pl){sessionStorage.removeItem("sema_plan");const c=catalog.find(x=>x.id===pl);if(c){show("browse");openPay(c)}}
+  if(pl){sessionStorage.removeItem("sema_plan");const c=catalog.find(x=>x.id===pl);
+    if(c){show("browse");
+      if(c.type==="Trial"){try{await claimFree(c)}catch(x){flash(x.message||"Could not start your free trial.",false)}}
+      else openPay(c)}}
 });
 </script></body></html>
