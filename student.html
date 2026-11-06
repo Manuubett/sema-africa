@@ -151,14 +151,15 @@ dialog .btn{margin-top:4px}
 /* 8c. Desktop: 900px and up. Fixed sidebar menu, wide content area */
 @media (min-width:900px){
   body{padding-left:var(--side);padding-bottom:48px}
-  .bar{position:fixed;inset:0 auto 0 0;width:var(--side);display:flex;flex-direction:column;
+  .bar{position:fixed;top:0;left:0;bottom:0;width:var(--side);height:100vh;height:100dvh;z-index:30;
+    display:flex;flex-direction:column;overflow:hidden;
     background:var(--card);border-right:1px solid var(--line)}
-  .top{flex-direction:column;align-items:flex-start;gap:12px;padding:24px 20px 22px}
+  .top{flex:none;flex-direction:column;align-items:flex-start;gap:10px;padding:20px 20px 18px}
   .logo{font-size:1.5rem}
-  .menu{flex:1;flex-direction:column;flex-wrap:nowrap;justify-content:flex-start;gap:2px;
-    padding:12px;overflow-x:hidden;overflow-y:auto;border-bottom:0}
-  .menu button{width:100%;text-align:left;border-radius:12px;padding:10px 16px}
-  .menu .out{margin:auto 0 0;border-top:1px solid var(--line);border-radius:0 0 12px 12px;padding-top:14px}
+  .menu{flex:1 1 auto;min-height:0;flex-direction:column;flex-wrap:nowrap;justify-content:flex-start;gap:2px;
+    padding:10px 12px;overflow-x:hidden;overflow-y:auto;border-bottom:0}
+  .menu button{flex:none;width:100%;min-height:40px;text-align:left;border-radius:10px;padding:8px 16px}
+  .menu .out{margin:auto 0 0;border-top:1px solid var(--line);border-radius:0 0 10px 10px;padding-top:12px}
 
   .main{max-width:1100px;padding:40px 40px 8px}
   #title{font-size:2.4rem;margin-bottom:20px}
