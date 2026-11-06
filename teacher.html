@@ -23,16 +23,22 @@ const SERVER_URL=(FB.SERVER_URL||"").replace(/\/+$/,"");
 async function staffCancel(id){const r=await fetch(SERVER_URL+"/api/lessons/staff-cancel",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+await auth.currentUser.getIdToken()},body:JSON.stringify({lessonId:id})});
   const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||"Could not cancel");return d}
 import {onAuthStateChanged,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {doc,getDoc,setDoc,deleteDoc,collection,query,where,getDocs,addDoc,updateDoc,Timestamp,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {doc,getDoc,setDoc,deleteDoc,deleteField,collection,query,where,getDocs,addDoc,updateDoc,Timestamp,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 const $=id=>document.getElementById(id), view=$("view");
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const T=l=>l.start.toDate(), fd=d=>d.toLocaleDateString([],{weekday:"short",day:"numeric",month:"short"}), ft=d=>d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+const p2=n=>String(n).padStart(2,"0");
+const isoD=d=>d.getFullYear()+"-"+p2(d.getMonth()+1)+"-"+p2(d.getDate()), isoT=d=>p2(d.getHours())+":"+p2(d.getMinutes());
 const mon=d=>{d=new Date(d);d.setHours(0,0,0,0);d.setDate(d.getDate()-((d.getDay()+6)%7));return d};
 const ST={open:"Open slot",booked:"Booked",attended:"Attended",absent:"Absent",cancelled:"Cancelled"};
 const empty=(t,p)=>`<div class="empty"><strong>${t}</strong><p>${p}</p></div>`;
-let courses=[],links={},uid,me,students=[],lessons=[],mats=[],prog=[],week=mon(new Date()),cur="timetable",pick="";
+let courses=[],links={},uid,me,students=[],lessons=[],mats=[],prog=[],week=mon(new Date()),cur="timetable",pick="",editL="";
 const nameOf=id=>(students.find(s=>s.id===id)||{}).name||"";
 const opts=(sel)=>students.map(s=>`<option value="${s.id}" ${s.id===sel?"selected":""}>${esc(s.name)}</option>`).join("");
+// Show a message in the page's #m line (or an alert if the page has none)
+const say=(t,bad)=>{const m=$("m");if(m){m.className="msg "+(bad?"err":"ok");m.textContent=t}else if(bad)alert(t)};
+// Another of this teacher's lessons that overlaps the given time (cancelled ones are ignored)
+const findClash=(start,dur,skip)=>lessons.find(x=>x.id!==skip&&x.status!=="cancelled"&&+T(x)<+start+dur*60000&&+start<+T(x)+x.duration*60000);
 
 async function load(){
   const own=c=>getDocs(query(collection(db,c),where("teacherId","==",uid))).then(s=>s.docs.map(d=>({id:d.id,...d.data()})));
@@ -45,6 +51,16 @@ async function load(){
 const lessonRow=(l,acts="")=>`<div class="row"><div><strong>${fd(T(l))}, ${ft(T(l))}</strong> <span class="pill">${ST[l.status]||l.status}</span>
   <small>${esc(l.studentName||"No student yet")} · ${esc(l.courseName||l.type)}${l.topic?" · "+esc(l.topic):""} · ${l.duration} min</small></div><div class="acts">${(links[l.id]||l.meetLink)?`<a class="btn line sm" href="${esc(links[l.id]||l.meetLink)}" target="_blank" rel="noopener">Join</a>`:""}${acts}</div></div>`;
 const btn=(a,id,t,line=true)=>`<button class="btn sm ${line?"line":""}" data-act="${a}" data-id="${id}">${t}</button>`;
+
+// The edit form for one lesson (shown at the top of Upcoming lessons)
+const editForm=l=>{const d=T(l);
+  return `<form class="form" id="editF" style="margin-bottom:18px"><label class="full"><strong>Edit lesson: ${fd(d)}, ${ft(d)}</strong></label>
+  ${l.status==="booked"?`<small class="full">Booked by ${esc(l.studentName||"a student")}. If you change the time, they will see the new time on their Classes page, but they are not messaged automatically, so tell them. Reminders will be sent for the new time.</small>`:""}
+  <label>Date<input type="date" id="ed" required value="${isoD(d)}"></label><label>Time<input type="time" id="et" required value="${isoT(d)}"></label>
+  <label>Lesson (course)<select id="ec"><option value="">Keep: ${esc(l.courseName||l.type)} · ${l.duration} min</option>${courses.map(c=>`<option value="${c.id}">${esc(c.name)} · ${c.minutes} min</option>`).join("")}</select></label>
+  <label>Topic (optional)<input id="etp" maxlength="80" value="${esc(l.topic||"")}" placeholder="e.g. Greetings and introductions"></label>
+  <label class="full">Meeting link<input id="el" type="url" value="${esc(links[l.id]||l.meetLink||"")}" placeholder="https://meet.google.com/…"></label>
+  <div class="acts full"><button class="btn">Save changes</button>${btn("editx","","Cancel")}</div></form>`};
 
 let qu=[];
 const TYPES=["Notes","Exercise","Audio","Recording","Other"],LEVELS=["All levels","A1 Beginner","A2 Elementary","B1 Intermediate","B2 Upper intermediate"];
@@ -59,6 +75,7 @@ students:["Student list",()=>{
  ()=>{const q=$("q");if(q)q.oninput=()=>document.querySelectorAll("[data-s]").forEach(r=>r.hidden=!r.dataset.s.includes(q.value.toLowerCase()))}],
 timetable:["Weekly timetable",()=>{
   const days=[...Array(7)].map((_,i)=>{const d=new Date(week);d.setDate(d.getDate()+i);return d});
+  const now=Date.now();
   return `<form class="form" id="slotF"><label>Date<input type="date" id="sd" required></label><label>Time<input type="time" id="st" required></label>
   <label>Lesson (course)<select id="sc" required><option value="">Choose the lesson…</option>${courses.map(c=>`<option value="${c.id}">${esc(c.name)} · ${c.minutes} min</option>`).join("")}</select></label>
   <label>Topic (optional)<input id="stp" maxlength="80" placeholder="e.g. Greetings and introductions"></label>
@@ -66,17 +83,52 @@ timetable:["Weekly timetable",()=>{
   <label>Meeting link<input id="sm" type="url" placeholder="https://meet.google.com/…"></label>
   ${courses.length?"":`<p class="msg err full">No lessons to choose from yet. Ask the admin to add courses first.</p>`}<button class="btn">Add to timetable</button><p class="msg full" id="m"></p></form>
   <div class="nav2">${btn("prev","","Previous week")}<strong>${fd(days[0])} – ${fd(days[6])}</strong>${btn("next","","Next week")}${btn("today","","This week")}</div>
-  <div class="week">${days.map(d=>`<div class="day"><h3>${fd(d)}</h3>${lessons.filter(l=>T(l).toDateString()===d.toDateString()).map(l=>`<div class="slot ${l.status==="open"?"open":""}"><strong>${ft(T(l))}</strong> ${l.duration}m<br>${esc(l.studentName||"Open")}<br><small>${esc(l.courseName||l.type)}${l.topic?" · "+esc(l.topic):""}</small></div>`).join("")}</div>`).join("")}</div>`},
- ()=>{$("slotF").onsubmit=async e=>{e.preventDefault();const s=$("ss").value;
-   const ml=$("sm").value.trim();if(ml&&!/^https:\/\//.test(ml)){$("m").className="msg err";$("m").textContent="The meeting link must start with https://";return}
-   const c=courses.find(x=>x.id===$("sc").value);if(!c){$("m").className="msg err";$("m").textContent="Choose which lesson this time slot is for.";return}
-   const lr=doc(collection(db,"lessons"));
-   await setDoc(lr,{teacherId:uid,teacherName:me.name,studentId:s,studentName:nameOf(s),start:Timestamp.fromDate(new Date($("sd").value+"T"+$("st").value)),duration:+c.minutes,type:c.type,courseId:c.id,courseName:c.name,topic:$("stp").value.trim(),status:s?"booked":"open"});
-   if(ml)await setDoc(doc(db,"lessonLinks",lr.id),{teacherId:uid,meetLink:ml});
-   await refresh("Added to your timetable.")}}],
+  <div class="week">${days.map(d=>`<div class="day"><h3>${fd(d)}</h3>${lessons.filter(l=>T(l).toDateString()===d.toDateString()).map(l=>`<div class="slot ${l.status==="open"?"open":""}"><strong>${ft(T(l))}</strong> ${l.duration}m<br>${esc(l.studentName||"Open")}<br><small>${esc(ST[l.status]||l.status)} · ${esc(l.courseName||l.type)}${l.topic?" · "+esc(l.topic):""}</small>
+   <div class="acts">${["open","booked"].includes(l.status)&&T(l)>=now?btn("edit",l.id,"Edit"):""}${["open","cancelled"].includes(l.status)?btn("dellesson",l.id,"Delete"):""}</div></div>`).join("")}</div>`).join("")}</div>`},
+ ()=>{$("slotF").onsubmit=async e=>{e.preventDefault();const b=e.target.querySelector("button:not([type=button])");b.disabled=true;
+   try{
+    const s=$("ss").value,ml=$("sm").value.trim();
+    if(ml&&!/^https:\/\//.test(ml))throw new Error("The meeting link must start with https://");
+    const c=courses.find(x=>x.id===$("sc").value);if(!c)throw new Error("Choose which lesson this time slot is for.");
+    const start=new Date($("sd").value+"T"+$("st").value);
+    if(isNaN(start))throw new Error("Choose a valid date and time.");
+    if(start<Date.now())throw new Error("That time has already passed. Choose a future time.");
+    const dur=+c.minutes,clash=findClash(start,dur,"");
+    if(clash)throw new Error("This overlaps your lesson on "+fd(T(clash))+" at "+ft(T(clash))+".");
+    const lr=doc(collection(db,"lessons"));
+    await setDoc(lr,{teacherId:uid,teacherName:me.name,studentId:s,studentName:nameOf(s),start:Timestamp.fromDate(start),duration:dur,type:c.type,courseId:c.id,courseName:c.name,topic:$("stp").value.trim(),status:s?"booked":"open"});
+    if(ml)await setDoc(doc(db,"lessonLinks",lr.id),{teacherId:uid,meetLink:ml});
+    await refresh("Added to your timetable.")
+   }catch(x){say(x.message||String(x),true);if(b.isConnected)b.disabled=false}}}],
 upcoming:["Upcoming lessons",()=>{const now=Date.now();
   const l=lessons.filter(x=>T(x)>=now&&["open","booked"].includes(x.status));
-  return l.length?l.map(x=>lessonRow(x,x.status==="open"?btn("dellesson",x.id,"Delete"):btn("cancelled",x.id,"Cancel"))).join(""):empty("No upcoming lessons","Add slots in Weekly timetable.")}],
+  const e=editL&&lessons.find(x=>x.id===editL&&["open","booked"].includes(x.status)&&T(x)>=now);
+  return `<p class="msg" id="m"></p>`+(e?editForm(e):"")+
+   (l.length?l.map(x=>lessonRow(x,btn("edit",x.id,"Edit")+(x.status==="open"?btn("dellesson",x.id,"Delete"):btn("cancelled",x.id,"Cancel")))).join(""):empty("No upcoming lessons","Add slots in Weekly timetable."))},
+ ()=>{const f=$("editF");if(!f)return;
+  f.onsubmit=async e=>{e.preventDefault();const l=lessons.find(x=>x.id===editL);if(!l)return;
+   const b=f.querySelector("button:not([type=button])");b.disabled=true;
+   try{
+    const ml=$("el").value.trim();
+    if(ml&&!/^https:\/\//.test(ml))throw new Error("The meeting link must start with https://");
+    const start=new Date($("ed").value+"T"+$("et").value);
+    if(isNaN(start))throw new Error("Choose a valid date and time.");
+    if(start<Date.now())throw new Error("That time has already passed. Choose a future time.");
+    const c=courses.find(x=>x.id===$("ec").value),dur=c?+c.minutes:+l.duration;
+    const clash=findClash(start,dur,l.id);
+    if(clash)throw new Error("This overlaps your lesson on "+fd(T(clash))+" at "+ft(T(clash))+".");
+    const data={start:Timestamp.fromDate(start),duration:dur,topic:$("etp").value.trim()};
+    if(c){data.courseId=c.id;data.courseName=c.name;data.type=c.type}
+    // A new time needs fresh reminders, so clear the "already sent" marks
+    if(+start!==+T(l))data.reminders=deleteField();
+    await updateDoc(doc(db,"lessons",l.id),data);
+    const old=links[l.id]||l.meetLink||"";
+    if(ml!==old){
+      if(ml)await setDoc(doc(db,"lessonLinks",l.id),{teacherId:uid,meetLink:ml});
+      else{try{await deleteDoc(doc(db,"lessonLinks",l.id))}catch{}}
+    }
+    editL="";await refresh("Lesson updated.")
+   }catch(x){say(x.message||String(x),true);if(b.isConnected)b.disabled=false}}}],
 materials:["Learning materials",()=>`<div class="form"><label class="full" style="border:2px dashed #0005;border-radius:12px;padding:22px;text-align:center;cursor:pointer">Drop files here or click to choose (PDF, Word, audio, images; up to 25 MB each)<input type="file" id="mf" multiple hidden></label>
   <label>Share with<select id="ms"><option value="">All my students</option>${opts()}</select></label>
   <button class="btn" id="upAll" type="button">Upload all</button><p class="msg full" id="m"></p></div><div id="qL"></div><form class="form" id="lkF"><label class="full"><strong>Or add a recording link (unlisted YouTube or Vimeo)</strong></label><label>Title<input id="lt" required></label><label>Link<input id="lu" type="url" placeholder="https://…" required></label><button class="btn">Add link</button></form>
@@ -111,26 +163,35 @@ progress:["Student progress",()=>`<form class="form" id="pF"><label>Student<sele
 history:["Attendance and lesson history",()=>{const now=Date.now();
   const l=lessons.filter(x=>T(x)<now).reverse();
   const n=s=>l.filter(x=>x.status===s).length;
-  return `<p><strong>${n("attended")}</strong> attended · <strong>${n("absent")}</strong> absent · <strong>${n("cancelled")}</strong> cancelled</p>`+
+  return `<p><strong>${n("attended")}</strong> attended · <strong>${n("absent")}</strong> absent · <strong>${n("cancelled")}</strong> cancelled</p><p class="msg" id="m"></p>`+
   (l.length?l.map(x=>lessonRow(x,x.status==="booked"?btn("attended",x.id,"Attended",false)+btn("absent",x.id,"Absent"):["open","cancelled"].includes(x.status)?btn("dellesson",x.id,"Delete"):"")).join(""):empty("No past lessons","Completed lessons will be listed here."))}]
 };
-async function refresh(msg){await load();show(cur);if(msg&&$("m")){$("m").className="msg ok";$("m").textContent=msg}}
-function show(k){cur=k;const [t,h,b]=PAGES[k];$("title").textContent=t;view.innerHTML=h();if(b)b();
+async function refresh(msg){await load();show(cur);if(msg)say(msg)}
+function show(k){if(k!=="upcoming")editL="";cur=k;const [t,h,b]=PAGES[k];$("title").textContent=t;view.innerHTML=h();if(b)b();
   $("side").querySelectorAll("button[data-k]").forEach(x=>x.setAttribute("aria-current",x.dataset.k===k))}
 view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const a=b.dataset.act,id=b.dataset.id;
   if(a==="prev"||a==="next"){week.setDate(week.getDate()+(a==="next"?7:-7));return show("timetable")}
   if(a==="today"){week=mon(new Date());return show("timetable")}
   if(a==="prog"){pick=id;return show("progress")}
+  if(a==="edit"){editL=id;show("upcoming");scrollTo(0,0);return}
+  if(a==="editx"){editL="";return show("upcoming")}
   if(a==="open"){const w=window.open("","_blank");try{const r=await fetch(WORKER_URL+"/file/"+id,{headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});if(!r.ok)throw 0;w.location=URL.createObjectURL(await r.blob())}catch{w.close();alert("Could not open the file.")}return}
-  if(a==="dellesson"){if(!confirm("Delete this time slot? This cannot be undone."))return;b.disabled=true;
+  if(a==="dellesson"){const l=lessons.find(x=>x.id===id);if(!l)return;
+    if(l.status==="booked"){say("A booked lesson can't be deleted. Cancel it first so the student gets their lesson back.",true);return}
+    if(!confirm("Delete the time slot on "+fd(T(l))+" at "+ft(T(l))+"? This cannot be undone."))return;b.disabled=true;
     try{await deleteDoc(doc(db,"lessons",id));try{await deleteDoc(doc(db,"lessonLinks",id))}catch{}await refresh("Time slot deleted.")}
-    catch(x){alert("Could not delete it. A booked lesson must be cancelled instead, so the student gets their lesson back.");b.disabled=false}return}
+    catch(x){say("Could not delete it. A booked lesson must be cancelled instead, so the student gets their lesson back.",true);b.disabled=false}return}
   if(a==="delmat"){const m=mats.find(x=>x.id===id);if(!m||!confirm("Delete \""+m.title+"\"? Students will no longer be able to open it."))return;b.disabled=true;
     try{if(m.fileKey){const r=await fetch(WORKER_URL+"/file/"+id,{method:"DELETE",headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});
         if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.error||"Could not delete the file")}}
       else await deleteDoc(doc(db,"materials",id));
       await refresh("Deleted.")}catch(x){alert(x.message);b.disabled=false}return}
-  if(a==="cancelled"&&SERVER_URL){if(!confirm("Cancel this lesson? A booked student gets their lesson back."))return;b.disabled=true;try{await staffCancel(id);await refresh("Lesson cancelled.")}catch(x){alert(x.message);b.disabled=false}return}
+  if(a==="cancelled"){
+    // A booked lesson must be cancelled on the server so the student gets their lesson back
+    if(!SERVER_URL){say("Cancelling a booked lesson needs the server, which is not set up.",true);return}
+    if(!confirm("Cancel this lesson? A booked student gets their lesson back."))return;b.disabled=true;
+    try{await staffCancel(id);await refresh("Lesson cancelled.")}catch(x){say(x.message,true);b.disabled=false}return}
+  if(!["attended","absent"].includes(a))return;
   b.disabled=true;await updateDoc(doc(db,"lessons",id),{status:a});await refresh()};
 onAuthStateChanged(auth,async u=>{
   if(!u)return location.href="auth.html";
