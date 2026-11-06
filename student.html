@@ -9,7 +9,7 @@
 :root{
   --paper:#F5F6FA;--card:#FFFFFF;--ink:#14213A;--muted:#5D6A82;--line:#DDE2EC;
   --brand:#12355B;--brand-ink:#FFFFFF;--sun:#F2B01E;--leaf:#1B8A5A;--rose:#C2374F;
-  --tab-h:64px;--r:16px;
+  --r:16px;
   --display:'Bricolage Grotesque','Trebuchet MS',sans-serif;--body:'Nunito Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
 }
 @media (prefers-color-scheme:dark){:root{
@@ -18,23 +18,33 @@
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--paper);color:var(--ink);font:400 1rem/1.5 var(--body);
-  padding-bottom:calc(var(--tab-h) + env(safe-area-inset-bottom,0px) + 16px)}
+  padding-bottom:calc(32px + env(safe-area-inset-bottom,0px))}
 a{color:var(--brand);font-weight:700}
 small{display:block;color:var(--muted);font-size:.84rem;line-height:1.4}
 h1,h2,h3{margin:0}
 
-/* top bar */
-.top{position:sticky;top:0;z-index:20;background:var(--brand);color:var(--brand-ink);
-  padding:calc(10px + env(safe-area-inset-top,0px)) 16px 10px;display:flex;align-items:center;justify-content:space-between;gap:12px}
-.top::after{content:"";position:absolute;left:0;right:0;bottom:-5px;height:5px;
-  background:repeating-linear-gradient(90deg,var(--sun) 0 18px,var(--leaf) 18px 36px,var(--rose) 36px 54px,var(--brand) 54px 72px)}
+/* sticky top area: brand bar + menu */
+.bar{position:sticky;top:0;z-index:30}
+.top{background:repeating-linear-gradient(90deg,var(--sun) 0 18px,var(--leaf) 18px 36px,var(--rose) 36px 54px,var(--brand) 54px 72px) left bottom/100% 5px no-repeat,var(--brand);
+  color:var(--brand-ink);padding:calc(10px + env(safe-area-inset-top,0px)) 16px 15px;display:flex;align-items:center;justify-content:space-between;gap:12px}
 .logo{font:800 1.25rem var(--display);color:inherit;text-decoration:none;letter-spacing:-.01em}
 .logo b{color:var(--sun)}
 .chip{font:700 .85rem var(--body);background:rgba(255,255,255,.16);color:inherit;border-radius:99px;padding:5px 12px;white-space:nowrap}
 @media (prefers-color-scheme:dark){.chip{background:rgba(14,22,38,.14)}}
 
+/* top menu: one scrolling row of pills, works on phones and desktops */
+.menu{display:flex;gap:6px;overflow-x:auto;padding:8px 12px;background:var(--card);border-bottom:1px solid var(--line);
+  scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.menu::-webkit-scrollbar{display:none}
+.menu button{flex:none;appearance:none;border:0;background:transparent;color:var(--muted);font:700 .92rem var(--body);
+  min-height:44px;padding:8px 16px;border-radius:99px;cursor:pointer;white-space:nowrap}
+.menu button:hover{background:color-mix(in srgb,var(--brand) 10%,var(--card));color:var(--ink)}
+.menu button[aria-current=true]{background:var(--brand);color:var(--brand-ink)}
+.menu .out{color:var(--rose);margin-left:auto}
+.menu button:focus-visible{outline:3px solid var(--sun);outline-offset:-3px}
+
 /* page */
-.main{max-width:640px;margin:0 auto;padding:22px 16px 8px}
+.main{max-width:720px;margin:0 auto;padding:22px 16px 8px}
 #title{font:800 1.75rem/1.15 var(--display);letter-spacing:-.02em;margin-bottom:14px}
 .msg{margin:0 0 12px;min-height:0;font-weight:700}
 .msg:empty{display:none}
@@ -60,6 +70,7 @@ h3.sec{font:700 1.2rem var(--display);margin:26px 0 10px}
 .empty{padding:22px 18px;text-align:left;border-style:dashed}
 .empty strong{display:block;font:700 1.15rem var(--display);margin-bottom:4px}
 .empty p{margin:0 0 14px;color:var(--muted)}
+.empty .btn+.btn{margin-left:8px}
 
 /* hero: next class */
 .hero{background:var(--brand);color:var(--brand-ink);border:0;padding:20px 18px;border-radius:20px;position:relative;overflow:hidden}
@@ -77,8 +88,10 @@ h3.sec{font:700 1.2rem var(--display);margin:26px 0 10px}
 .btn.line{background:transparent;color:var(--brand)}
 .btn.sm{min-height:44px;padding:8px 14px;font-size:.95rem}
 .btn:disabled{opacity:.55;cursor:default}
-.btn:focus-visible,.tabs button:focus-visible,input:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
+.btn:focus-visible,input:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
 .quick{display:grid;gap:10px;margin-top:16px}
+.tools{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}
+.tools p{margin:0}
 
 /* catalogue */
 .cat{display:grid;gap:12px}
@@ -97,16 +110,6 @@ input[type=text],input[type=tel],input:not([type]){width:100%;min-height:48px;pa
 input[type=checkbox],input[type=radio]{width:22px;height:22px;accent-color:var(--brand);flex:none}
 .form label:has(input[type=checkbox]),.form label:has(input[type=radio]){display:flex;gap:12px;align-items:center;min-height:44px;font-weight:600}
 
-/* bottom tabs */
-.tabs{position:fixed;left:0;right:0;bottom:0;z-index:30;height:calc(var(--tab-h) + env(safe-area-inset-bottom,0px));
-  padding-bottom:env(safe-area-inset-bottom,0px);display:grid;grid-template-columns:repeat(5,1fr);
-  background:var(--card);border-top:1px solid var(--line)}
-.tabs button{appearance:none;border:0;background:none;color:var(--muted);font:700 .72rem var(--body);display:flex;flex-direction:column;
-  align-items:center;justify-content:center;gap:3px;padding:6px 2px;cursor:pointer;position:relative}
-.tabs svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
-.tabs button[aria-current=true]{color:var(--brand)}
-.tabs button[aria-current=true]::before{content:"";position:absolute;top:0;left:28%;right:28%;height:3px;border-radius:0 0 3px 3px;background:var(--sun)}
-
 /* sheets (dialogs) */
 dialog{border:0;padding:22px 18px calc(22px + env(safe-area-inset-bottom,0px));width:100%;max-width:520px;max-height:90dvh;overflow:auto;
   margin:auto auto 0;border-radius:22px 22px 0 0;background:var(--paper);color:var(--ink)}
@@ -115,26 +118,24 @@ dialog[open]{animation:up .22s ease-out}
 @keyframes up{from{transform:translateY(24px);opacity:0}to{transform:none;opacity:1}}
 dialog h2{font:800 1.4rem var(--display)}
 dialog .btn{margin-top:4px}
-.more{display:grid;gap:8px;margin-top:12px}
-.more button{appearance:none;width:100%;text-align:left;min-height:52px;padding:12px 16px;border:1px solid var(--line);border-radius:14px;
-  background:var(--card);color:var(--ink);font:700 1rem var(--body);cursor:pointer}
-.more button[aria-current=true]{border-color:var(--brand);box-shadow:inset 4px 0 0 var(--brand)}
-.more .out{color:var(--rose);margin-top:6px}
 @media (min-width:600px){
   dialog{margin:auto;border-radius:22px}
   .cat{grid-template-columns:1fr 1fr}
   .row{flex-direction:row;align-items:center;justify-content:space-between}
   .row>.btn{width:auto}
   .acts .btn{flex:0 0 auto}
+  .menu{justify-content:center;flex-wrap:wrap;overflow:visible}
+  .menu .out{margin-left:0}
 }
 @media (prefers-reduced-motion:reduce){dialog[open]{animation:none}}
 </style></head><body>
 
-<header class="top"><a class="logo" href="index.html">Sema<b>Africa</b></a><span class="chip" id="chip" hidden></span></header>
+<div class="bar">
+  <header class="top"><a class="logo" href="index.html">Sema<b>Africa</b></a><span class="chip" id="chip" hidden></span></header>
+  <nav class="menu" id="tabs" aria-label="Student menu"></nav>
+</div>
 <main class="main"><h1 id="title">Karibu</h1><p class="msg" id="flash" aria-live="polite"></p><div id="view"><p>Loading…</p></div></main>
-<nav class="tabs" id="tabs" aria-label="Student menu"></nav>
 
-<dialog id="moreDlg" aria-label="More"><h2>More</h2><div class="more" id="moreBody"></div></dialog>
 <dialog id="rsDlg" aria-label="Choose a new time"><div id="rsBody"></div></dialog>
 <dialog id="payDlg" aria-label="Pay for a course"><div id="payBody"></div></dialog>
 
@@ -161,13 +162,18 @@ const fd=v=>{const d=dt(v);return d?d.toLocaleDateString([],{day:"numeric",month
 const money=(a,c)=>(c==="KES"?"KES ":"$")+Number(a||0).toLocaleString();
 const empty=(t,p,a)=>`<div class="empty"><strong>${t}</strong><p>${p}</p>${a?`<a class="btn" href="${a[1]}"${a[1].length>1&&a[1][0]==="#"?` data-go="${a[1].slice(1)}"`:""}>${a[0]}</a>`:""}</div>`;
 const flash=(t,ok=true)=>{$("flash").className="msg "+(ok?"ok":"err");$("flash").textContent=t;if(t)scrollTo({top:0,behavior:"smooth"})};
-let uid,me,enr=[],mine=[],openSlots=[],prog=[],pays=[],mats=[],catalog=[],cur="overview",
+let uid,me,enr=[],mine=[],openSlots=[],slotsErr="",prog=[],pays=[],mats=[],catalog=[],cur="overview",
     quizzes=[],attempts=[],qz=null,qAns=[],qDone=null,qErr=false;
 async function load(){
   const q=(c,f,v)=>getDocs(query(collection(db,c),where(f,"==",v))).then(s=>s.docs.map(d=>({id:d.id,...d.data()})));
-  const [e,m,o,p,y,m1,m2,cs]=await Promise.all([q("enrollments","userId",uid),q("lessons","studentId",uid),q("lessons","status","open"),q("progress","studentId",uid),q("payments","userId",uid),q("materials","studentId",uid),q("materials","studentId",""),getDocs(collection(db,"courses"))]);
+  const [e,m,p,y,m1,m2,cs]=await Promise.all([q("enrollments","userId",uid),q("lessons","studentId",uid),q("progress","studentId",uid),q("payments","userId",uid),q("materials","studentId",uid),q("materials","studentId",""),getDocs(collection(db,"courses"))]);
   enr=e;mine=m;catalog=cs.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.active!==false).sort((a,b)=>(a.type==="Trial"?-1:0)-(b.type==="Trial"?-1:0)||a.usd-b.usd);prog=p.sort((a,b)=>dt(b.date)-dt(a.date));pays=y.sort((a,b)=>dt(b.createdAt)-dt(a.createdAt));
-  openSlots=o.filter(l=>dt(l.start)>new Date()).sort((a,b)=>dt(a.start)-dt(b.start));
+  // Open times load on their own, so a failure here shows a clear message instead of "no times"
+  slotsErr="";
+  try{
+    const o=await q("lessons","status","open");
+    openSlots=o.filter(l=>dt(l.start)&&dt(l.start)>new Date()).sort((a,b)=>dt(a.start)-dt(b.start));
+  }catch(x){openSlots=[];slotsErr=x.code||x.message||"error"}
   const seen={};mats=[...m1,...m2].filter(x=>!seen[x.id]&&(seen[x.id]=1)).sort((a,b)=>(dt(b.createdAt)||0)-(dt(a.createdAt)||0));
   // Quizzes: two queries (assigned to me, and for all students), as the Firestore rules require.
   // A failure here must not break the rest of the page.
@@ -187,6 +193,7 @@ const upcoming=()=>mine.filter(l=>l.status==="booked"&&dt(l.start).getTime()>Dat
 const join=l=>l.meetLink?`<a class="btn sm" href="${esc(l.meetLink)}" target="_blank" rel="noopener">Join class</a>`:"<small>Link coming soon</small>";
 const matRow=m=>`<div class="row"><div><strong>${esc(m.title)}</strong> <span class="pill">${esc(m.type||"Notes")}</span> <span class="pill">${esc(m.level||"All levels")}</span><small>Added ${fd(m.createdAt)}</small></div>
   ${m.link?`<a class="btn line sm" href="${esc(m.link)}" target="_blank" rel="noopener">Watch</a>`:`<button class="btn line sm" data-act="open" data-id="${m.id}">Open</button>`}</div>`;
+const refreshBtn='<button class="btn line sm" data-act="refresh" type="button">Refresh times</button>';
 const PAGES={
 overview:["Overview",()=>{const n=upcoming()[0],lv=prog[0];
   return `<p>Hujambo, ${esc(me.name)}! Here is where your learning stands.</p>
@@ -212,7 +219,9 @@ browse:["Browse courses",()=>{
 courses:["My enrolled courses",()=>enr.length?enr.map(e=>`<div class="row"><div><strong>${esc(e.courseName)}</strong> <span class="pill">${esc(e.status)}</span><small>${e.lessonsLeft} of ${e.lessonsTotal} lessons left · started ${fd(e.startDate)}${e.expiresAt?" · ends "+fd(e.expiresAt):""}</small></div></div>`).join(""):empty("No courses yet","Once you enrol, your courses appear here.",["Browse courses","#browse"])],
 book:["Book a lesson",()=>{
   if(!usable().length)return empty("You need an active plan to book","You have no lessons left. Start a free trial or choose a plan, or ask your teacher if you think this is a mistake.",["Browse courses","#browse"]);
-  return `<p>You have <strong>${credits()}</strong> lesson${credits()===1?"":"s"} left. Booking uses one.</p>`+(openSlots.length?openSlots.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"Your teacher")} · ${esc(l.type)} · ${l.duration} min</small></div><button class="btn sm" data-act="book" data-id="${l.id}">Book this time</button></div>`).join(""):empty("No open times right now","Your teacher has not published new times yet. Check back soon."))}],
+  const head=`<div class="tools"><p>You have <strong>${credits()}</strong> lesson${credits()===1?"":"s"} left. Booking uses one.</p>${refreshBtn}</div>`;
+  if(slotsErr)return head+empty("Open times could not be loaded","Tap Refresh to try again. If it keeps happening, tell your teacher this code: "+esc(slotsErr));
+  return head+(openSlots.length?openSlots.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"Your teacher")} · ${esc(l.type)} · ${l.duration} min</small></div><button class="btn sm" data-act="book" data-id="${l.id}">Book this time</button></div>`).join(""):empty("No open times right now","Your teacher has not published new times yet. Tap Refresh to check again."))}],
 upcoming:["Classes",()=>{const u=upcoming(),past=mine.filter(l=>!u.includes(l)&&dt(l.start)<new Date()).sort((a,b)=>dt(b.start)-dt(a.start));
   return (u.length&&SERVER_URL?`<p><small>Free to cancel or move a class up to ${cancelHrs} hours before it starts. Later changes use the lesson.</small></p>`:"")+(u.length?u.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"")} · ${esc(l.type)} · ${l.duration} min</small></div><div class="acts">${join(l)}${SERVER_URL?`<button class="btn line sm" data-act="resched" data-id="${l.id}">Reschedule</button><button class="btn line sm" data-act="cancelLesson" data-id="${l.id}">Cancel</button>`:""}</div></div>`).join(""):empty("No classes scheduled","Book a time and it will show here with your meeting link.",["Book a lesson","#"]))+
   `<h3 class="sec">Past classes</h3>`+(past.length?past.slice(0,30).map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong> <span class="pill">${esc(l.status)}</span><small>${esc(l.type)}</small></div></div>`).join(""):"<p><small>Nothing yet.</small></p>")}],
@@ -250,8 +259,9 @@ const ACT={
   if(c.type==="Trial")return claimFree(c);   // trials never go through payment
   openPay(c)},
  async free(b){try{await claimFree(catalog.find(c=>c.id===b.dataset.id))}finally{b.disabled=false}},
+ async refresh(b){await load();show(cur);flash("Times updated.")},
  async open(b){const w=window.open("","_blank");try{const r=await fetch(WORKER_URL+"/file/"+b.dataset.id,{headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.error||"Could not open that file.")}w.location=URL.createObjectURL(await r.blob())}catch(x){w.close();flash(x.message||"Could not open that file.",false)}b.disabled=false},
- async book(b){const l=openSlots.find(x=>x.id===b.dataset.id),e=usable()[0];if(!l||!e)return;if(!confirm("Book "+fdt(l.start)+"? This uses 1 lesson."))return;
+ async book(b){const l=openSlots.find(x=>x.id===b.dataset.id),e=usable()[0];if(!l||!e){b.disabled=false;return}if(!confirm("Book "+fdt(l.start)+"? This uses 1 lesson.")){b.disabled=false;return}
   try{const w=writeBatch(db);
    w.update(doc(db,"lessons",l.id),{status:"booked",studentId:uid,studentName:me.name,enrollmentId:e.id});
    w.update(doc(db,"enrollments",e.id),{lessonsLeft:e.lessonsLeft-1});
@@ -353,6 +363,7 @@ Object.assign(ACT,{
     flash(d.refunded?"Class cancelled. Your lesson was returned.":"Class cancelled. The lesson was used because it was too close to the start time.")},
   async resched(b){const l=mine.find(x=>x.id===b.dataset.id);b.disabled=false;if(!l)return;
     if(!isEarly(l)){flash("This class starts in less than "+cancelHrs+" hours, so it can no longer be moved. You can cancel it, but the lesson will be used.",false);return}
+    try{await load()}catch{}   // fresh list of open times
     const slots=openSlots.filter(s=>s.id!==l.id);
     $("rsBody").innerHTML=`<h2>Move your class</h2><p><small>Now: ${fdt(l.start)}. Pick a new time and your lesson is kept.</small></p><div style="margin-top:12px">`+
       (slots.length?slots.map(s=>`<div class="row"><div><strong>${fdt(s.start)}</strong><small>${esc(s.teacherName||"")} · ${s.duration} min</small></div><button class="btn sm" data-mv="${s.id}" data-from="${l.id}">Move here</button></div>`).join(""):"<p>No open times right now. Check back soon.</p>")+
@@ -363,39 +374,27 @@ $("rsDlg").onclick=async e=>{if(e.target.closest("[data-close]"))return $("rsDlg
   try{await lapi("/reschedule",{lessonId:b.dataset.from,newLessonId:b.dataset.mv});$("rsDlg").close();await load();show("upcoming");flash("Your class has been moved.")}
   catch(err){$("rsDlg").close();await load();show("upcoming");flash(err.message,false)}};
 
-/* ── navigation: bottom tabs + "More" sheet ── */
-const ICON={
-  overview:'<path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10"/>',
-  book:'<rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M8 3v4M16 3v4M3.5 10h17M12 13.5v4M10 15.5h4"/>',
-  upcoming:'<rect x="3" y="6" width="13" height="12" rx="2.5"/><path d="m16 10.5 5-3v9l-5-3"/>',
-  progress:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
-  more:'<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>'
-};
-const TABS=[["overview","Home"],["book","Book"],["upcoming","Classes"],["progress","Progress"]];
-const MORE=["quizzes","browse","courses","notes","recordings","reminders","payments"];
+/* ── navigation: one menu row at the top ── */
+const NAV=[["overview","Home"],["book","Book"],["upcoming","Classes"],["progress","Progress"],["quizzes","Quizzes"],["browse","Courses"],["courses","My courses"],["notes","Notes"],["recordings","Recordings"],["reminders","Reminders"],["payments","Payments"]];
 function buildNav(){
   const t=$("tabs");
-  t.innerHTML=TABS.map(([k,l])=>`<button type="button" data-k="${k}"><svg viewBox="0 0 24 24" aria-hidden="true">${ICON[k]}</svg>${l}</button>`).join("")+
-    `<button type="button" data-k="more"><svg viewBox="0 0 24 24" aria-hidden="true">${ICON.more}</svg>More</button>`;
-  t.onclick=e=>{const b=e.target.closest("button[data-k]");if(!b)return;flash("");
-    if(b.dataset.k==="more"){drawMore();$("moreDlg").showModal()}else show(b.dataset.k)};
-  $("moreDlg").onclick=e=>{
-    if(e.target===$("moreDlg"))return $("moreDlg").close();
-    const b=e.target.closest("button");if(!b)return;
+  t.innerHTML=NAV.map(([k,l])=>`<button type="button" data-k="${k}">${l}</button>`).join("")+'<button type="button" class="out" data-out>Log out</button>';
+  t.onclick=e=>{const b=e.target.closest("button");if(!b)return;
     if(b.dataset.out!==undefined)return signOut(auth).then(()=>location.href="index.html");
-    $("moreDlg").close();flash("");show(b.dataset.k)};
+    flash("");go(b.dataset.k)};
 }
-function drawMore(){
-  $("moreBody").innerHTML=MORE.map(k=>`<button type="button" data-k="${k}" aria-current="${cur===k}">${PAGES[k][0]}</button>`).join("")+
-    '<button type="button" class="out" data-out>Log out</button>';
-}
+// Pages that show times or classes reload their data first, so new slots from the teacher always appear
+async function go(k){
+  if(k==="book"||k==="upcoming"){try{await load()}catch{}}
+  show(k)}
 function show(k){if(k!=="quizzes"){qz=null;qDone=null}cur=k;const [t,h]=PAGES[k];$("title").textContent=t;view.innerHTML=h();
-  const inTabs=TABS.some(x=>x[0]===k);
-  $("tabs").querySelectorAll("button[data-k]").forEach(x=>x.setAttribute("aria-current",x.dataset.k===k||(x.dataset.k==="more"&&!inTabs)));
+  let active=null;
+  $("tabs").querySelectorAll("button[data-k]").forEach(x=>{const on=x.dataset.k===k;x.setAttribute("aria-current",on);if(on)active=x});
+  if(active&&active.scrollIntoView)active.scrollIntoView({inline:"center",block:"nearest"});
   const n=credits(),c=$("chip");c.hidden=false;c.textContent=n+" lesson"+(n===1?"":"s")+" left";
   scrollTo(0,0)}
-view.onclick=async e=>{const g=e.target.closest("[data-go]");if(g){e.preventDefault();return show(g.dataset.go)}
-  const a=e.target.closest("a[href='#']");if(a){e.preventDefault();return show("book")}
+view.onclick=async e=>{const g=e.target.closest("[data-go]");if(g){e.preventDefault();return go(g.dataset.go)}
+  const a=e.target.closest("a[href='#']");if(a){e.preventDefault();return go("book")}
   const b=e.target.closest("[data-act]");if(!b)return;b.disabled=true;try{await ACT[b.dataset.act](b)}catch(x){flash(x.message&&!x.code?x.message:"That did not work.",false);b.disabled=false}};
 onAuthStateChanged(auth,async u=>{
   if(!u)return location.href="auth.html";
