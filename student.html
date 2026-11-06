@@ -4,18 +4,28 @@
 <meta name="robots" content="noindex, nofollow">
 <title>My learning – SemaAfrica</title>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Nunito+Sans:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="student-responsive.css">
 <style>
-/* Mobile-first student dashboard. Self-contained: does not need app.css. */
+/* =====================================================================
+   SemaAfrica student dashboard: one mobile-first, responsive stylesheet.
+   1. Tokens   2. Base   3. Shell (top bar + menu)   4. Page
+   5. Components   6. Forms   7. Dialogs
+   8. Breakpoints: 600px tablet · 900px desktop sidebar · 1400px large
+   ===================================================================== */
+
+/* 1. Tokens */
 :root{
   --paper:#F5F6FA;--card:#FFFFFF;--ink:#14213A;--muted:#5D6A82;--line:#DDE2EC;
   --brand:#12355B;--brand-ink:#FFFFFF;--sun:#F2B01E;--leaf:#1B8A5A;--rose:#C2374F;
-  --r:16px;
-  --display:'Bricolage Grotesque','Trebuchet MS',sans-serif;--body:'Nunito Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --r:16px;--side:264px;
+  --display:'Bricolage Grotesque','Trebuchet MS',sans-serif;
+  --body:'Nunito Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
 }
 @media (prefers-color-scheme:dark){:root{
   --paper:#0E1626;--card:#16223A;--ink:#EEF2FA;--muted:#9AA7C0;--line:#26344F;
-  --brand:#8FB8F0;--brand-ink:#0E1626;--sun:#F5BE3F;--leaf:#4FCB8F;--rose:#F0788D}}
+  --brand:#8FB8F0;--brand-ink:#0E1626;--sun:#F5BE3F;--leaf:#4FCB8F;--rose:#F0788D}
+  .chip{background:rgba(14,22,38,.14)}}
+
+/* 2. Base */
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--paper);color:var(--ink);font:400 1rem/1.5 var(--body);
@@ -24,16 +34,13 @@ a{color:var(--brand);font-weight:700}
 small{display:block;color:var(--muted);font-size:.84rem;line-height:1.4}
 h1,h2,h3{margin:0}
 
-/* sticky top area: brand bar + menu */
+/* 3. Shell: sticky top bar and scrolling pill menu on phones/tablets */
 .bar{position:sticky;top:0;z-index:30}
 .top{background:repeating-linear-gradient(90deg,var(--sun) 0 18px,var(--leaf) 18px 36px,var(--rose) 36px 54px,var(--brand) 54px 72px) left bottom/100% 5px no-repeat,var(--brand);
   color:var(--brand-ink);padding:calc(10px + env(safe-area-inset-top,0px)) 16px 15px;display:flex;align-items:center;justify-content:space-between;gap:12px}
 .logo{font:800 1.25rem var(--display);color:inherit;text-decoration:none;letter-spacing:-.01em}
 .logo b{color:var(--sun)}
 .chip{font:700 .85rem var(--body);background:rgba(255,255,255,.16);color:inherit;border-radius:99px;padding:5px 12px;white-space:nowrap}
-@media (prefers-color-scheme:dark){.chip{background:rgba(14,22,38,.14)}}
-
-/* top menu: one scrolling row of pills, works on phones and desktops */
 .menu{display:flex;gap:6px;overflow-x:auto;padding:8px 12px;background:var(--card);border-bottom:1px solid var(--line);
   scrollbar-width:none;-webkit-overflow-scrolling:touch}
 .menu::-webkit-scrollbar{display:none}
@@ -44,7 +51,7 @@ h1,h2,h3{margin:0}
 .menu .out{color:var(--rose);margin-left:auto}
 .menu button:focus-visible{outline:3px solid var(--sun);outline-offset:-3px}
 
-/* page */
+/* 4. Page */
 .main{max-width:720px;margin:0 auto;padding:22px 16px 8px}
 #title{font:800 1.75rem/1.15 var(--display);letter-spacing:-.02em;margin-bottom:14px}
 .msg{margin:0 0 12px;min-height:0;font-weight:700}
@@ -54,7 +61,7 @@ h1,h2,h3{margin:0}
 .msg.err{background:color-mix(in srgb,var(--rose) 14%,var(--card));color:var(--ink);border:1px solid var(--rose)}
 #view>p{margin:0 0 14px}
 
-/* cards, rows */
+/* 5. Components */
 .card,.row,.empty{background:var(--card);border:1px solid var(--line);border-radius:var(--r)}
 .card{padding:16px}
 .card h2{font:800 1.5rem/1.2 var(--display);margin-top:4px}
@@ -63,17 +70,19 @@ h1,h2,h3{margin:0}
 .row{display:flex;flex-direction:column;gap:12px;padding:14px;margin-bottom:10px}
 .row strong{font-weight:700}
 .row .pill{vertical-align:middle}
+.row>.btn{width:100%}
 .acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .acts .btn{flex:1 1 auto}
-.row>.btn{width:100%}
 h3.sec{font:700 1.2rem var(--display);margin:26px 0 10px}
 .pill{display:inline-block;font:700 .75rem/1 var(--body);padding:5px 9px;border-radius:99px;background:color-mix(in srgb,var(--brand) 14%,var(--card));color:var(--ink);margin-left:4px}
 .empty{padding:22px 18px;text-align:left;border-style:dashed}
 .empty strong{display:block;font:700 1.15rem var(--display);margin-bottom:4px}
 .empty p{margin:0 0 14px;color:var(--muted)}
 .empty .btn+.btn{margin-left:8px}
+.tools{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}
+.tools p{margin:0}
+.quick{display:grid;gap:10px;margin-top:16px}
 
-/* hero: next class */
 .hero{background:var(--brand);color:var(--brand-ink);border:0;padding:20px 18px;border-radius:20px;position:relative;overflow:hidden}
 .hero small{color:inherit;opacity:.8}
 .hero h2{font:800 1.8rem/1.15 var(--display);margin:6px 0 16px;letter-spacing:-.02em}
@@ -82,7 +91,6 @@ h3.sec{font:700 1.2rem var(--display);margin:26px 0 10px}
 .hero::after{content:"";position:absolute;right:-30px;top:-30px;width:110px;height:110px;border-radius:50%;
   background:repeating-radial-gradient(circle,rgba(255,255,255,.14) 0 6px,transparent 6px 14px);pointer-events:none}
 
-/* buttons */
 .btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:46px;padding:10px 18px;
   border:2px solid var(--brand);border-radius:12px;background:var(--brand);color:var(--brand-ink);
   font:700 1rem var(--body);text-decoration:none;cursor:pointer;text-align:center}
@@ -90,20 +98,16 @@ h3.sec{font:700 1.2rem var(--display);margin:26px 0 10px}
 .btn.sm{min-height:44px;padding:8px 14px;font-size:.95rem}
 .btn:disabled{opacity:.55;cursor:default}
 .btn:focus-visible,input:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
-.quick{display:grid;gap:10px;margin-top:16px}
-.tools{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}
-.tools p{margin:0}
 
-/* catalogue */
-.cat{display:grid;gap:12px}
+.cat{display:grid;gap:12px;grid-template-columns:1fr}
 .course{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
 .course .pill{margin-left:0}
 .course h3{font:700 1.25rem var(--display)}
 .pr{font:800 1.7rem var(--display)}
 .pr small{display:inline;font:600 .85rem var(--body);color:var(--muted)}
-.course .btn{width:100%;margin-top:6px}
+.course .btn{width:100%;margin-top:auto}
 
-/* forms */
+/* 6. Forms */
 .form{display:grid;gap:14px}
 label{display:grid;gap:6px;font-weight:700}
 input[type=text],input[type=tel],input:not([type]){width:100%;min-height:48px;padding:10px 14px;border:2px solid var(--line);border-radius:12px;
@@ -111,7 +115,7 @@ input[type=text],input[type=tel],input:not([type]){width:100%;min-height:48px;pa
 input[type=checkbox],input[type=radio]{width:22px;height:22px;accent-color:var(--brand);flex:none}
 .form label:has(input[type=checkbox]),.form label:has(input[type=radio]){display:flex;gap:12px;align-items:center;min-height:44px;font-weight:600}
 
-/* sheets (dialogs) */
+/* 7. Dialogs: bottom sheet on phones, centred modal on larger screens */
 dialog{border:0;padding:22px 18px calc(22px + env(safe-area-inset-bottom,0px));width:100%;max-width:520px;max-height:90dvh;overflow:auto;
   margin:auto auto 0;border-radius:22px 22px 0 0;background:var(--paper);color:var(--ink)}
 dialog::backdrop{background:rgba(8,14,26,.6)}
@@ -119,16 +123,62 @@ dialog[open]{animation:up .22s ease-out}
 @keyframes up{from{transform:translateY(24px);opacity:0}to{transform:none;opacity:1}}
 dialog h2{font:800 1.4rem var(--display)}
 dialog .btn{margin-top:4px}
+@media (prefers-reduced-motion:reduce){dialog[open]{animation:none}}
+
+/* 8a. Very small phones */
+@media (max-width:360px){
+  .main{padding:18px 12px 8px}
+  #title{font-size:1.5rem}
+  .g{grid-template-columns:1fr}
+}
+
+/* 8b. Tablet: 600px and up. Same top bar, roomier content */
 @media (min-width:600px){
-  dialog{margin:auto;border-radius:22px}
-  .cat{grid-template-columns:1fr 1fr}
+  .main{max-width:880px;padding:28px 24px 8px}
+  #title{font-size:2rem}
+  .menu{justify-content:center;flex-wrap:wrap;overflow:visible}
+  .menu .out{margin-left:0}
+  .cat{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+  .g{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+  .quick{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
   .row{flex-direction:row;align-items:center;justify-content:space-between}
   .row>.btn{width:auto}
   .acts .btn{flex:0 0 auto}
-  .menu{justify-content:center;flex-wrap:wrap;overflow:visible}
-  .menu .out{margin-left:0}
+  .hero .btn{width:auto;min-width:200px}
+  dialog{max-width:560px;margin:auto;border-radius:22px;padding:28px 26px}
 }
-@media (prefers-reduced-motion:reduce){dialog[open]{animation:none}}
+
+/* 8c. Desktop: 900px and up. Fixed sidebar menu, wide content area */
+@media (min-width:900px){
+  body{padding-left:var(--side);padding-bottom:48px}
+  .bar{position:fixed;inset:0 auto 0 0;width:var(--side);display:flex;flex-direction:column;
+    background:var(--card);border-right:1px solid var(--line)}
+  .top{flex-direction:column;align-items:flex-start;gap:12px;padding:24px 20px 22px}
+  .logo{font-size:1.5rem}
+  .menu{flex:1;flex-direction:column;flex-wrap:nowrap;justify-content:flex-start;gap:2px;
+    padding:12px;overflow-x:hidden;overflow-y:auto;border-bottom:0}
+  .menu button{width:100%;text-align:left;border-radius:12px;padding:10px 16px}
+  .menu .out{margin:auto 0 0;border-top:1px solid var(--line);border-radius:0 0 12px 12px;padding-top:14px}
+
+  .main{max-width:1100px;padding:40px 40px 8px}
+  #title{font-size:2.4rem;margin-bottom:20px}
+  .cat{grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+  .g{gap:16px}
+  .hero{padding:30px 32px}
+  .hero h2{font-size:2.4rem}
+  .card h2{font-size:1.8rem}
+  .row{padding:16px 20px}
+  .row:hover{border-color:var(--brand)}
+  .form{max-width:560px}
+  #view>p{max-width:70ch}
+}
+
+/* 8d. Large desktop: 1400px and up */
+@media (min-width:1400px){
+  :root{--side:288px}
+  .main{max-width:1240px;padding:48px 56px 8px}
+  .cat{grid-template-columns:repeat(3,1fr)}
+}
 </style></head><body>
 
 <div class="bar">
@@ -375,7 +425,7 @@ $("rsDlg").onclick=async e=>{if(e.target.closest("[data-close]"))return $("rsDlg
   try{await lapi("/reschedule",{lessonId:b.dataset.from,newLessonId:b.dataset.mv});$("rsDlg").close();await load();show("upcoming");flash("Your class has been moved.")}
   catch(err){$("rsDlg").close();await load();show("upcoming");flash(err.message,false)}};
 
-/* ── navigation: one menu row at the top ── */
+/* ── navigation: top pills on phones and tablets, sidebar on desktop ── */
 const NAV=[["overview","Home"],["book","Book"],["upcoming","Classes"],["progress","Progress"],["quizzes","Quizzes"],["browse","Courses"],["courses","My courses"],["notes","Notes"],["recordings","Recordings"],["reminders","Reminders"],["payments","Payments"]];
 function buildNav(){
   const t=$("tabs");
