@@ -9,7 +9,8 @@
    SemaAfrica student dashboard: one mobile-first, responsive stylesheet.
    1. Tokens   2. Base   3. Shell (top bar + menu)   4. Page
    5. Components   6. Forms   7. Dialogs
-   8. Breakpoints: 600px tablet · 900px desktop sidebar · 1400px large
+   8. Breakpoints: 360 small phone · 600 tablet · 700 list columns
+                   900 desktop sidebar · 1400 large screens
    ===================================================================== */
 
 /* 1. Tokens */
@@ -79,9 +80,11 @@ h3.sec{font:700 1.2rem var(--display);margin:26px 0 10px}
 .empty strong{display:block;font:700 1.15rem var(--display);margin-bottom:4px}
 .empty p{margin:0 0 14px;color:var(--muted)}
 .empty .btn+.btn{margin-left:8px}
-.tools{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}
+.tools{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
 .tools p{margin:0}
 .quick{display:grid;gap:10px;margin-top:16px}
+.dash{display:grid;gap:12px}
+.dash .g{margin-top:0}
 
 .hero{background:var(--brand);color:var(--brand-ink);border:0;padding:20px 18px;border-radius:20px;position:relative;overflow:hidden}
 .hero small{color:inherit;opacity:.8}
@@ -140,15 +143,32 @@ dialog .btn{margin-top:4px}
   .menu .out{margin-left:0}
   .cat{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
   .g{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
-  .quick{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
-  .row{flex-direction:row;align-items:center;justify-content:space-between}
+  .quick{display:flex;flex-wrap:wrap}
+  .quick .btn{flex:0 1 auto}
+  .row{flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:space-between}
+  .row>div:first-child{flex:1 1 200px;min-width:0}
   .row>.btn{width:auto}
   .acts .btn{flex:0 0 auto}
   .hero .btn{width:auto;min-width:200px}
   dialog{max-width:560px;margin:auto;border-radius:22px;padding:28px 26px}
 }
 
-/* 8c. Desktop: 900px and up. Fixed sidebar menu, wide content area */
+/* 8c. Lists flow into columns from 700px; forms and quiz taking stay narrow */
+@media (min-width:700px){
+  #view{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;align-items:stretch}
+  #view>*{min-width:0}
+  #view>:not(.row){grid-column:1/-1}
+  #view>.row{margin-bottom:0}
+  #view>.g{max-width:560px}
+  #view>p{max-width:70ch}
+  #view.narrow{display:block;max-width:680px}
+  #view.narrow>.row,#view.narrow>.card{margin-bottom:10px}
+  .dash{grid-template-columns:1.6fr 1fr}
+  .dash .g{grid-template-columns:1fr;grid-template-rows:1fr 1fr;max-width:none}
+  .dash .hero{display:flex;flex-direction:column;justify-content:center}
+}
+
+/* 8d. Desktop: 900px and up. Fixed sidebar menu, wide content area */
 @media (min-width:900px){
   body{padding-left:var(--side);padding-bottom:48px}
   .bar{position:fixed;top:0;left:0;bottom:0;width:var(--side);height:100vh;height:100dvh;z-index:30;
@@ -163,22 +183,21 @@ dialog .btn{margin-top:4px}
 
   .main{max-width:1100px;padding:40px 40px 8px}
   #title{font-size:2.4rem;margin-bottom:20px}
-  .cat{grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+  .cat{grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
   .g{gap:16px}
   .hero{padding:30px 32px}
   .hero h2{font-size:2.4rem}
   .card h2{font-size:1.8rem}
   .row{padding:16px 20px}
   .row:hover{border-color:var(--brand)}
-  .form{max-width:560px}
-  #view>p{max-width:70ch}
 }
 
-/* 8d. Large desktop: 1400px and up */
+/* 8e. Large desktop: 1400px and up */
 @media (min-width:1400px){
   :root{--side:288px}
   .main{max-width:1240px;padding:48px 56px 8px}
   .cat{grid-template-columns:repeat(3,1fr)}
+  #view{grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
 }
 </style></head><body>
 
@@ -241,6 +260,11 @@ async function load(){
 }
 const usable=()=>enr.filter(e=>e.status==="active"&&e.lessonsLeft>0&&(!e.expiresAt||dt(e.expiresAt)>new Date()));
 const credits=()=>usable().reduce((a,e)=>a+e.lessonsLeft,0);
+// A Trial priced at 0 is claimed with no payment. A Trial with a price is paid for with M-Pesa like any plan.
+const isFree=c=>c.type==="Trial"&&!(Number(c.kes)>0);
+// Trial lessons and regular lessons are booked separately: a plan only books times of its own kind
+const isTr=t=>/^trial/i.test(t||"");
+const fit=l=>usable().some(e=>isTr(e.type)===isTr(l.type));
 const upcoming=()=>mine.filter(l=>l.status==="booked"&&dt(l.start).getTime()>Date.now()-45*60000).sort((a,b)=>dt(a.start)-dt(b.start));
 const join=l=>l.meetLink?`<a class="btn sm" href="${esc(l.meetLink)}" target="_blank" rel="noopener">Join class</a>`:"<small>Link coming soon</small>";
 const matRow=m=>`<div class="row"><div><strong>${esc(m.title)}</strong> <span class="pill">${esc(m.type||"Notes")}</span> <span class="pill">${esc(m.level||"All levels")}</span><small>Added ${fd(m.createdAt)}</small></div>
@@ -249,34 +273,40 @@ const refreshBtn='<button class="btn line sm" data-act="refresh" type="button">R
 const PAGES={
 overview:["Overview",()=>{const n=upcoming()[0],lv=prog[0];
   return `<p>Hujambo, ${esc(me.name)}! Here is where your learning stands.</p>
-  <div class="card hero"><small>Next class</small><h2>${n?fdt(n.start):"None booked"}</h2>${n?join(n):`<a class="btn" href="#" data-go="book">Book a lesson</a>`}</div>
+  <div class="dash"><div class="card hero"><small>Next class</small><h2>${n?fdt(n.start):"None booked"}</h2>${n?join(n):`<a class="btn" href="#" data-go="book">Book a lesson</a>`}</div>
   <div class="g"><div class="card"><small>Lessons left</small><h2>${credits()}</h2></div>
-  <div class="card"><small>Your level</small><h2>${lv?esc(lv.level):"Not set"}</h2></div></div>
-  <div class="quick"><a class="btn line" href="#" data-go="browse">Browse courses</a></div>`+(enr.length?"":`<div style="margin-top:16px">`+empty("You are not enrolled yet","Start with a free trial lesson, or choose a plan to unlock live classes, recordings and notes.",["Browse courses","#browse"])+`</div>`)}],
+  <div class="card"><small>Your level</small><h2>${lv?esc(lv.level):"Not set"}</h2></div></div></div>
+  <div class="quick"><a class="btn line" href="#" data-go="browse">Browse courses</a></div>`+(enr.length?"":`<div style="margin-top:16px">`+empty("You are not enrolled yet","Start with a trial lesson, or choose a plan to unlock live classes, recordings and notes.",["Browse courses","#browse"])+`</div>`)}],
 browse:["Browse courses",()=>{
   if(!catalog.length)return empty("No courses are published yet","New courses will appear here. Check back soon.");
   const own=id=>enr.some(e=>e.courseId===id&&e.status==="active"&&e.lessonsLeft>0&&(!e.expiresAt||dt(e.expiresAt)>new Date()));
-  const used=id=>enr.some(e=>e.courseId===id);   // a free trial can only be claimed once
+  const used=id=>enr.some(e=>e.courseId===id);   // a trial lesson can only be had once
   const card=c=>{
-    if(c.type==="Trial")return `<article class="card course"><span class="pill">${esc(c.type)}</span><h3>${esc(c.name)}</h3>
+    if(isFree(c))return `<article class="card course"><span class="pill">${esc(c.type)}</span><h3>${esc(c.name)}</h3>
      <small>${c.lessons} lesson${c.lessons>1?"s":""} × ${c.minutes} min · no payment needed</small>
      <div class="pr">Free</div>
-     ${used(c.id)?'<span class="pill">You have used your free trial</span>':`<button class="btn" data-act="free" data-id="${c.id}">Start free trial</button>`}</article>`;
+     ${used(c.id)?'<span class="pill">You have had your trial lesson</span>':`<button class="btn" data-act="free" data-id="${c.id}">Start trial lesson</button>`}</article>`;
+    const had=c.type==="Trial"&&used(c.id);
     return `<article class="card course"><span class="pill">${esc(c.type)}</span><h3>${esc(c.name)}</h3>
      <small>${c.lessons} lesson${c.lessons>1?"s":""} × ${c.minutes} min${c.type==="Monthly"?" · valid for 30 days":""}</small>
      <div class="pr">KES ${Number(c.kes).toLocaleString()} <small>≈ $${c.usd}</small></div>${c.lessons>1&&c.usd>0?`<small>About $${(c.usd/c.lessons).toFixed(2)} per lesson</small>`:""}
-     ${own(c.id)?'<span class="pill">You have this plan</span>':""}<button class="btn" data-act="enrol" data-id="${c.id}">${own(c.id)?"Buy again":"Enrol with M-Pesa"}</button></article>`};
-  return `<p>Try a free lesson first, or pick a plan and pay with M-Pesa. Then book your lessons right away.</p><div class="cat">${catalog.map(card).join("")}</div>
+     ${had?'<span class="pill">You have had your trial lesson</span>':`${own(c.id)?'<span class="pill">You have this plan</span>':""}<button class="btn" data-act="enrol" data-id="${c.id}">${own(c.id)?"Buy again":"Enrol with M-Pesa"}</button>`}</article>`};
+  const tr=catalog.find(c=>c.type==="Trial");
+  const intro=!tr?"Pick a plan and pay with M-Pesa.":isFree(tr)?"Start with a free trial lesson, or pick a plan. You pay with M-Pesa.":"Start with a trial lesson (KES "+Number(tr.kes).toLocaleString()+"), or pick a plan. You pay with M-Pesa.";
+  return `<p>${intro} Then book your lessons right away.</p><div class="cat">${catalog.map(card).join("")}</div>
    <p style="margin-top:14px"><small>Paying from outside Kenya? Card payments are coming soon.</small></p>`}],
 courses:["My enrolled courses",()=>enr.length?enr.map(e=>`<div class="row"><div><strong>${esc(e.courseName)}</strong> <span class="pill">${esc(e.status)}</span><small>${e.lessonsLeft} of ${e.lessonsTotal} lessons left · started ${fd(e.startDate)}${e.expiresAt?" · ends "+fd(e.expiresAt):""}</small></div></div>`).join(""):empty("No courses yet","Once you enrol, your courses appear here.",["Browse courses","#browse"])],
 book:["Book a lesson",()=>{
-  if(!usable().length)return empty("You need an active plan to book","You have no lessons left. Start a free trial or choose a plan, or ask your teacher if you think this is a mistake.",["Browse courses","#browse"]);
+  if(!usable().length)return empty("You need an active plan to book","You have no lessons left. Start a trial lesson or choose a plan, or ask your teacher if you think this is a mistake.",["Browse courses","#browse"]);
   const head=`<div class="tools"><p>You have <strong>${credits()}</strong> lesson${credits()===1?"":"s"} left. Booking uses one.</p>${refreshBtn}</div>`;
   if(slotsErr)return head+empty("Open times could not be loaded","Tap Refresh to try again. If it keeps happening, tell your teacher this code: "+esc(slotsErr));
-  return head+(openSlots.length?openSlots.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"Your teacher")} · ${esc(l.type)} · ${l.duration} min</small></div><button class="btn sm" data-act="book" data-id="${l.id}">Book this time</button></div>`).join(""):empty("No open times right now","Your teacher has not published new times yet. Tap Refresh to check again."))}],
+  const fits=openSlots.filter(fit);
+  return head+(fits.length?fits.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"Your teacher")} · ${esc(l.courseName||l.type)}${l.topic?" · "+esc(l.topic):""} · ${l.duration} min</small></div><button class="btn sm" data-act="book" data-id="${l.id}">Book this time</button></div>`).join(""):
+    empty(openSlots.length?"No open times for your plan":"No open times right now",
+      openSlots.length?"There are open times, but they are for a different kind of lesson. Trial lessons and regular lessons are booked separately. Tap Refresh to check again.":"Your teacher has not published new times yet. Tap Refresh to check again."))}],
 upcoming:["Classes",()=>{const u=upcoming(),past=mine.filter(l=>!u.includes(l)&&dt(l.start)<new Date()).sort((a,b)=>dt(b.start)-dt(a.start));
-  return (u.length&&SERVER_URL?`<p><small>Free to cancel or move a class up to ${cancelHrs} hours before it starts. Later changes use the lesson.</small></p>`:"")+(u.length?u.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"")} · ${esc(l.type)} · ${l.duration} min</small></div><div class="acts">${join(l)}${SERVER_URL?`<button class="btn line sm" data-act="resched" data-id="${l.id}">Reschedule</button><button class="btn line sm" data-act="cancelLesson" data-id="${l.id}">Cancel</button>`:""}</div></div>`).join(""):empty("No classes scheduled","Book a time and it will show here with your meeting link.",["Book a lesson","#"]))+
-  `<h3 class="sec">Past classes</h3>`+(past.length?past.slice(0,30).map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong> <span class="pill">${esc(l.status)}</span><small>${esc(l.type)}</small></div></div>`).join(""):"<p><small>Nothing yet.</small></p>")}],
+  return (u.length&&SERVER_URL?`<p><small>Free to cancel or move a class up to ${cancelHrs} hours before it starts. Later changes use the lesson.</small></p>`:"")+(u.length?u.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"")} · ${esc(l.courseName||l.type)}${l.topic?" · "+esc(l.topic):""} · ${l.duration} min</small></div><div class="acts">${join(l)}${SERVER_URL?`<button class="btn line sm" data-act="resched" data-id="${l.id}">Reschedule</button><button class="btn line sm" data-act="cancelLesson" data-id="${l.id}">Cancel</button>`:""}</div></div>`).join(""):empty("No classes scheduled","Book a time and it will show here with your meeting link.",["Book a lesson","#"]))+
+  `<h3 class="sec">Past classes</h3>`+(past.length?past.slice(0,30).map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong> <span class="pill">${esc(l.status)}</span><small>${esc(l.courseName||l.type)}</small></div></div>`).join(""):"<p><small>Nothing yet.</small></p>")}],
 progress:["Progress",()=>{const att=mine.filter(l=>l.status==="attended").length;
   return `<div class="g" style="margin-top:0"><div class="card"><small>Current level</small><h2>${prog[0]?esc(prog[0].level):"–"}</h2></div><div class="card"><small>Classes attended</small><h2>${att}</h2></div></div><h3 class="sec">Teacher notes</h3>`+
   (prog.length?prog.map(p=>`<div class="row"><div><strong>${esc(p.topic)}</strong> <span class="pill">${esc(p.level)}</span><small>${fd(p.date)}${p.notes?" · "+esc(p.notes):""}</small></div></div>`).join(""):empty("Nothing recorded yet","After each lesson your teacher adds notes on how you are doing."))}],
@@ -298,22 +328,23 @@ reminders:["Class reminders",()=>`<p>We remind you before each class so you neve
 payments:["Payment history",()=>pays.length?pays.map(p=>`<div class="row"><div><strong>${money(p.amount,p.currency)}</strong> · ${esc(p.courseName)}<small>${esc(p.method)} ${esc(p.reference||"")} · ${fd(p.createdAt)}</small></div></div>`).join(""):empty("No payments yet","Receipts for your plans will be listed here.")]
 };
 
-/* ── Free trial: no payment, the server enrols the student (one per student) ── */
+/* ── Free trial lesson (priced at 0): no payment, the server enrols the student once ── */
 async function claimFree(c){
   if(!c)return;
   if(!SERVER_URL)throw new Error("Online enrolment is being set up. For now, please ask your teacher to enrol you.");
   await api("/claim-free","POST",{courseId:c.id});
   await load();show("book");
-  flash("Your free trial is ready. Pick a time below to book your lesson.");
+  flash("Your trial lesson is ready. Pick a time below to book it.");
 }
 const ACT={
  async enrol(b){b.disabled=false;const c=catalog.find(c=>c.id===b.dataset.id);if(!c)return;
-  if(c.type==="Trial")return claimFree(c);   // trials never go through payment
+  if(isFree(c))return claimFree(c);   // only a trial priced at 0 skips payment
   openPay(c)},
  async free(b){try{await claimFree(catalog.find(c=>c.id===b.dataset.id))}finally{b.disabled=false}},
  async refresh(b){await load();show(cur);flash("Times updated.")},
  async open(b){const w=window.open("","_blank");try{const r=await fetch(WORKER_URL+"/file/"+b.dataset.id,{headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.error||"Could not open that file.")}w.location=URL.createObjectURL(await r.blob())}catch(x){w.close();flash(x.message||"Could not open that file.",false)}b.disabled=false},
- async book(b){const l=openSlots.find(x=>x.id===b.dataset.id),e=usable()[0];if(!l||!e){b.disabled=false;return}if(!confirm("Book "+fdt(l.start)+"? This uses 1 lesson.")){b.disabled=false;return}
+ // Book with the plan that matches the lesson: a trial time uses the trial plan, a regular time uses a regular plan
+ async book(b){const l=openSlots.find(x=>x.id===b.dataset.id),e=usable().find(x=>isTr(x.type)===isTr(l&&l.type));if(!l||!e){b.disabled=false;return}if(!confirm("Book "+fdt(l.start)+"? This uses 1 lesson.")){b.disabled=false;return}
   try{const w=writeBatch(db);
    w.update(doc(db,"lessons",l.id),{status:"booked",studentId:uid,studentName:me.name,enrollmentId:e.id});
    w.update(doc(db,"enrollments",e.id),{lessonsLeft:e.lessonsLeft-1});
@@ -416,7 +447,8 @@ Object.assign(ACT,{
   async resched(b){const l=mine.find(x=>x.id===b.dataset.id);b.disabled=false;if(!l)return;
     if(!isEarly(l)){flash("This class starts in less than "+cancelHrs+" hours, so it can no longer be moved. You can cancel it, but the lesson will be used.",false);return}
     try{await load()}catch{}   // fresh list of open times
-    const slots=openSlots.filter(s=>s.id!==l.id);
+    // a class can only move to a time of the same kind (trial to trial, regular to regular)
+    const slots=openSlots.filter(s=>s.id!==l.id&&isTr(s.type)===isTr(l.type));
     $("rsBody").innerHTML=`<h2>Move your class</h2><p><small>Now: ${fdt(l.start)}. Pick a new time and your lesson is kept.</small></p><div style="margin-top:12px">`+
       (slots.length?slots.map(s=>`<div class="row"><div><strong>${fdt(s.start)}</strong><small>${esc(s.teacherName||"")} · ${s.duration} min</small></div><button class="btn sm" data-mv="${s.id}" data-from="${l.id}">Move here</button></div>`).join(""):"<p>No open times right now. Check back soon.</p>")+
       '</div><button class="btn line" style="width:100%" data-close type="button">Close</button>';
@@ -439,7 +471,10 @@ function buildNav(){
 async function go(k){
   if(k==="book"||k==="upcoming"){try{await load()}catch{}}
   show(k)}
-function show(k){if(k!=="quizzes"){qz=null;qDone=null}cur=k;const [t,h]=PAGES[k];$("title").textContent=t;view.innerHTML=h();
+function show(k){if(k!=="quizzes"){qz=null;qDone=null}cur=k;const [t,h]=PAGES[k];$("title").textContent=t;
+  // forms and quiz taking stay in a narrow column; lists flow into columns on wide screens
+  view.className=(k==="reminders"||(k==="quizzes"&&(qz||qDone)))?"narrow":"";
+  view.innerHTML=h();
   let active=null;
   $("tabs").querySelectorAll("button[data-k]").forEach(x=>{const on=x.dataset.k===k;x.setAttribute("aria-current",on);if(on)active=x});
   if(active&&active.scrollIntoView)active.scrollIntoView({inline:"center",block:"nearest"});
@@ -458,7 +493,7 @@ onAuthStateChanged(auth,async u=>{
   const pl=sessionStorage.getItem("sema_plan");
   if(pl){sessionStorage.removeItem("sema_plan");const c=catalog.find(x=>x.id===pl);
     if(c){show("browse");
-      if(c.type==="Trial"){try{await claimFree(c)}catch(x){flash(x.message||"Could not start your free trial.",false)}}
+      if(isFree(c)){try{await claimFree(c)}catch(x){flash(x.message||"Could not start your trial lesson.",false)}}
       else openPay(c)}}
 });
 </script></body></html>
