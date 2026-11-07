@@ -1,4 +1,5 @@
 // Class reminders by email and WhatsApp, about 24 hours and 1 hour before each booked lesson.
+// Also: teacher morning summary (preview button).
 const express = require('express');
 const crypto = require('crypto');
 const N = require('../lib/notify');
@@ -85,6 +86,62 @@ module.exports = (admin) => {
     if (!N.emailReady()) return res.status(400).json({ error: 'Email settings (BREVO_API_KEY and MAIL_FROM) are not set' });
     try { await N.sendEmail(String(req.query.to || ''), 'SemaAfrica test email', 'Your reminder emails are working.', '<p>Your reminder emails are working.</p>'); res.json({ ok: true }); }
     catch (e) { res.status(400).json({ error: e.message }); }
+  });
+
+  // ---- Teacher morning summary ----
+  const tkey = (d, tz) => d.toLocaleDateString('en-CA', { timeZone: tz });            // e.g. 2026-11-07
+  const tclock = (d, tz) => d.toLocaleTimeString('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit' });
+
+  async function morningSummary(uid, t) {
+    const tz = t.tz || 'Africa/Nairobi';
+    const now = new Date(), today = tkey(now, tz);
+    const snap = await db.collection('lessons').where('teacherId', '==', uid).get();
+    const lessons = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.start.toMillis() - b.start.toMillis());
+    const links = {};
+    (await db.collection('lessonLinks').where('teacherId', '==', uid).get()).forEach(d => links[d.id] = d.data().meetLink);
+    const link = l => links[l.id] || l.meetLink || '';
+
+    const live = l => ['open', 'booked'].includes(l.status);
+    const todays = lessons.filter(l => live(l) && tkey(l.start.toDate(), tz) === today);
+    const noLink = lessons.filter(l => live(l) && l.start.toMillis() >= now.getTime() && !link(l));
+    const unmarked = lessons.filter(l => l.status === 'booked' && l.start.toMillis() < now.getTime());
+    const label = l => `${tclock(l.start.toDate(), tz)} · ${l.studentName || 'Open slot'} · ${l.courseName || l.type || 'Lesson'}`;
+    const when = l => `${tkey(l.start.toDate(), tz)} ${tclock(l.start.toDate(), tz)}`;
+
+    const quiet = !todays.length && !noLink.length && !unmarked.length;
+    let text = `Hujambo ${String(t.name || 'teacher').split(' ')[0]}!\n\n`, html = `<p>Hujambo ${esc(String(t.name || 'teacher').split(' ')[0])}!</p>`;
+    if (todays.length) {
+      text += "Today's lessons:\n" + todays.map(l => `- ${label(l)}${link(l) ? '\n  Join: ' + link(l) : ' (no link yet)'}`).join('\n') + '\n\n';
+      html += "<h3>Today's lessons</h3><ul>" + todays.map(l => `<li>${esc(label(l))}${link(l) ? ` – <a href="${esc(link(l))}">Join</a>` : ' (no link yet)'}</li>`).join('') + '</ul>';
+    }
+    if (noLink.length) {
+      text += `Lessons that still need a meeting link (${noLink.length}):\n` + noLink.map(l => `- ${when(l)} · ${l.studentName || 'Open slot'}`).join('\n') + '\n\n';
+      html += `<h3>Need a meeting link (${noLink.length})</h3><ul>` + noLink.map(l => `<li>${esc(when(l))} · ${esc(l.studentName || 'Open slot')}</li>`).join('') + '</ul>';
+    }
+    if (unmarked.length) {
+      text += `Waiting to be marked attended or absent (${unmarked.length}):\n` + unmarked.map(l => `- ${when(l)} · ${l.studentName || ''}`).join('\n') + '\n\n';
+      html += `<h3>Mark attended or absent (${unmarked.length})</h3><ul>` + unmarked.map(l => `<li>${esc(when(l))} · ${esc(l.studentName || '')}</li>`).join('') + '</ul>';
+    }
+    if (quiet) { text += 'Nothing to report today.\n\n'; html += '<p>Nothing to report today.</p>'; }
+    text += `Open your dashboard: ${SITE}/teacher.html`;
+    html += `<p><a href="${esc(SITE)}/teacher.html">Open your dashboard</a></p>`;
+    return { subject: 'Your SemaAfrica day: ' + today, text, html, quiet };
+  }
+
+  // The teacher's "Send preview" button: sends the summary to the logged-in teacher
+  r.post('/morning-test', async (req, res) => {
+    try {
+      const m = /^Bearer (.+)$/.exec(req.get('authorization') || '');
+      if (!m) return res.status(401).json({ error: 'Please log in again' });
+      let dec; try { dec = await admin.auth().verifyIdToken(m[1]); } catch { return res.status(401).json({ error: 'Please log in again' }); }
+      const t = (await db.collection('users').doc(dec.uid).get()).data() || {};
+      if (t.role !== 'teacher') return res.status(403).json({ error: 'Teachers only' });
+      if (!t.email) return res.status(400).json({ error: 'Your account has no email address' });
+      if (!N.emailReady()) return res.status(400).json({ error: 'Email settings (BREVO_API_KEY and MAIL_FROM) are not set on the server' });
+      const s = await morningSummary(dec.uid, t);
+      await N.sendEmail(t.email, s.subject, s.text, s.html);
+      res.json({ ok: true, to: t.email });
+    } catch (e) { console.error('[morning-test]', e.message); res.status(500).json({ error: 'Could not send the preview' }); }
   });
 
   r.run = run;
