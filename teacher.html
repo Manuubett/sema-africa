@@ -264,7 +264,18 @@ history:["Attendance and lesson history",()=>{const now=Date.now();
   const l=lessons.filter(x=>T(x)<now&&x.status!=="open").reverse();
   const n=s=>l.filter(x=>x.status===s).length;
   return `<p><strong>${n("attended")}</strong> attended · <strong>${n("absent")}</strong> absent · <strong>${n("cancelled")}</strong> cancelled</p><p class="msg" id="m"></p>`+
-  (l.length?l.map(x=>lessonRow(x,x.status==="booked"?btn("attended",x.id,"Attended",false)+btn("absent",x.id,"Absent"):x.status==="cancelled"?btn("dellesson",x.id,"Delete"):"")).join(""):empty("No past lessons","Completed lessons will be listed here."))}]
+  (l.length?l.map(x=>lessonRow(x,x.status==="booked"?btn("attended",x.id,"Attended",false)+btn("absent",x.id,"Absent"):x.status==="cancelled"?btn("dellesson",x.id,"Delete"):"")).join(""):empty("No past lessons","Completed lessons will be listed here."))}],
+
+settings:["Email settings",()=>`<p class="msg" id="m"></p>
+  <form class="form" id="stF"><label class="chk"><input type="checkbox" id="stM" ${me.morningEmail!==false?"checked":""}> Email me a summary every morning</label>
+  <small class="full">It lists today's lessons with their Join links, lessons that still need a meeting link, and lessons waiting to be marked attended or absent. It arrives early in the morning in your time zone${TZ?" ("+esc(TZ)+")":""}. Nothing is sent on a quiet day with nothing to report.</small>
+  <button class="btn">Save</button></form>
+  <h3 style="margin:22px 0 8px;font-size:1.2rem">Preview</h3>
+  <div class="row"><div><strong>Send me a preview now</strong><small>Sends today's summary to ${esc(me.email||"your email address")} so you can see how it looks.</small></div><div class="acts">${btn("morningtest","","Send preview",false)}</div></div>`,
+ ()=>{$("stF").onsubmit=e=>{e.preventDefault();busy(sub(e.target),async()=>{
+   // the time zone is saved too, so the summary arrives at the right hour for you
+   const d={morningEmail:$("stM").checked,tz:TZ};
+   await updateDoc(doc(db,"users",uid),d);Object.assign(me,d);say("Saved.")})}}]
 };
 
 async function refresh(msg){await load();show(cur);if(msg)say(msg)}
@@ -287,6 +298,12 @@ view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const
   if(a==="prev"||a==="next"){week.setDate(week.getDate()+(a==="next"?7:-7));return show("timetable")}
   if(a==="today"){week=mon(new Date());return show("timetable")}
   if(a==="prog"){pick=id;return show("progress")}
+  if(a==="morningtest"){
+    if(!SERVER_URL){say("The server is not set up.",true);return}
+    return busy(b,async()=>{say("Sending… the server can take up to a minute to wake up.");
+      const r=await fetch(SERVER_URL+"/api/reminders/morning-test",{method:"POST",headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});
+      const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||"Could not send the preview");
+      say("Preview sent to "+d.to+". Check your inbox, and your spam folder if it is not there.")})}
   if(a==="edit"){editL=id;show("upcoming");scrollTo(0,0);return}
   if(a==="editx"){editL="";return show("upcoming")}
   if(a==="link"){
