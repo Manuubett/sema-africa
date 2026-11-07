@@ -1,5 +1,4 @@
 // Class reminders by email and WhatsApp, about 24 hours and 1 hour before each booked lesson.
-// Also: teacher morning summary (preview button).
 const express = require('express');
 const crypto = require('crypto');
 const N = require('../lib/notify');
@@ -70,6 +69,145 @@ module.exports = (admin) => {
     return out;
   }
 
+  // ── Teacher morning summary ───────────────────────────────────────────
+  // Sent once a day to each teacher, from MORNING_HOUR (default 6:00) in the teacher's own time zone,
+  // for up to three hours (so a server that was asleep still sends it when it wakes).
+  // The same 10-minute timer that sends class reminders drives it, so no new timer is needed.
+  const MORNING_HOUR = Number(process.env.MORNING_HOUR || 6);
+  const DEFAULT_TZ = process.env.TIMEZONE || 'Africa/Nairobi';
+  const DAY = 864e5;
+  const p2 = n => String(n).padStart(2, '0');
+  const okTz = z => { try { new Intl.DateTimeFormat('en-GB', { timeZone: z }); return !!z; } catch { return false; } };
+  const parts = (ms, tz) => new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    .formatToParts(new Date(ms)).reduce((a, x) => (a[x.type] = x.value, a), {});
+  const offset = (ms, tz) => { const p = parts(ms, tz); return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - ms; };
+  // Start of calendar day y-m-d in the time zone, as a UTC timestamp
+  const sod = (y, m, d, tz) => { const t0 = Date.UTC(y, m - 1, d); const t1 = t0 - offset(t0, tz); return t0 - offset(t1, tz); };
+  const dayOf = (ms, tz) => { const p = parts(ms, tz), y = +p.year, m = +p.month, d = +p.day; return { y, m, d, hour: +p.hour, start: sod(y, m, d, tz), end: sod(y, m, d + 1, tz) }; };
+  const fmt = (o, tz) => ms => new Intl.DateTimeFormat('en-GB', { timeZone: tz, ...o }).format(new Date(ms));
+
+  // Every teacher's lessons from 14 days back to 8 days ahead (one query, grouped here), plus their meeting links
+  async function digestData(now) {
+    const snap = await db.collection('lessons')
+      .where('start', '>=', Timestamp.fromMillis(now - 14 * DAY))
+      .where('start', '<=', Timestamp.fromMillis(now + 8 * DAY)).get();
+    const by = {}, ids = [];
+    snap.docs.forEach(d => {
+      const l = d.data(); if (!l.teacherId) return;
+      (by[l.teacherId] = by[l.teacherId] || []).push({ id: d.id, ...l });
+      if ((l.status === 'open' || l.status === 'booked') && l.start.toMillis() >= now) ids.push(d.id);
+    });
+    const links = {};
+    for (let i = 0; i < ids.length; i += 100) {
+      const refs = ids.slice(i, i + 100).map(id => db.collection('lessonLinks').doc(id));
+      (await db.getAll(...refs)).forEach(s => { if (s.exists) links[s.id] = s.data().meetLink; });
+    }
+    return { by, links };
+  }
+
+  function buildDigest(t, mine, links, now) {
+    const tz = okTz(t.tz) ? t.tz : DEFAULT_TZ, day = dayOf(now, tz);
+    const clock = fmt({ hour: '2-digit', minute: '2-digit' }, tz);
+    const when = fmt({ weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }, tz);
+    const dayName = fmt({ weekday: 'long', day: 'numeric', month: 'long' }, tz)(now);
+    const ms = l => l.start.toMillis(), linkOf = l => links[l.id] || l.meetLink || '';
+    const live = mine.filter(l => (l.status === 'open' || l.status === 'booked') && ms(l) >= now);
+    const todayBooked = mine.filter(l => l.status === 'booked' && ms(l) >= day.start && ms(l) < day.end).sort((a, b) => ms(a) - ms(b));
+    const todayOpen = live.filter(l => l.status === 'open' && ms(l) < day.end).length;
+    const noLink = live.filter(l => ms(l) < now + 7 * DAY && !linkOf(l)).sort((a, b) => ms(a) - ms(b));
+    const toMark = mine.filter(l => l.status === 'booked' && ms(l) + (l.duration || 45) * 60000 < now).sort((a, b) => ms(b) - ms(a));
+    const week = live.filter(l => ms(l) < now + 7 * DAY);
+    const wb = week.filter(l => l.status === 'booked').length, wo = week.length - wb;
+    const first = String(t.name || 'there').split(' ')[0];
+    const what = l => [l.studentName || 'Open slot', l.courseName || l.type, l.topic].filter(Boolean).join(' · ');
+    const more = (a, n) => a.length > n ? `+${a.length - n} more` : '';
+    const attn = noLink.length + toMark.length, n = todayBooked.length;
+
+    const subject = (n ? `Your day: ${n} lesson${n > 1 ? 's' : ''} today` : 'Your day: no lessons booked today') + (attn ? ` · ${attn} to check` : '');
+
+    // plain text
+    const tx = [`Hujambo ${first}!`, '', dayName, ''];
+    tx.push(n ? `Today's lessons (${n}):` : 'No lessons are booked for today.');
+    todayBooked.forEach(l => tx.push(`  ${clock(ms(l))}  ${what(l)} (${l.duration || ''} min)  ${linkOf(l) || 'NO MEETING LINK YET'}`));
+    if (todayOpen) tx.push('', `${todayOpen} open slot${todayOpen > 1 ? 's' : ''} still free today.`);
+    if (noLink.length) { tx.push('', `Needs a meeting link (${noLink.length}):`); noLink.slice(0, 8).forEach(l => tx.push(`  ${when(ms(l))}  ${what(l)}`)); if (noLink.length > 8) tx.push('  ' + more(noLink, 8)); }
+    if (toMark.length) { tx.push('', `Waiting to be marked attended or absent (${toMark.length}):`); toMark.slice(0, 8).forEach(l => tx.push(`  ${when(ms(l))}  ${what(l)}`)); if (toMark.length > 8) tx.push('  ' + more(toMark, 8)); }
+    tx.push('', `Next 7 days: ${wb} booked, ${wo} open slot${wo === 1 ? '' : 's'}.`, '', `Open your dashboard: ${SITE}/teacher.html`, 'You can turn this email off under Email settings in your dashboard.');
+
+    // html
+    const li = s => `<li style="margin:6px 0">${s}</li>`;
+    const ul = a => `<ul style="padding-left:18px;margin:8px 0">${a.join('')}</ul>`;
+    const h = s => `<h3 style="margin:22px 0 4px;font-size:16px">${s}</h3>`;
+    let html = `<div style="font-family:Arial,sans-serif;color:#14213A;max-width:560px"><p style="margin:0 0 4px">Hujambo ${esc(first)}!</p><p style="margin:0;color:#555">${esc(dayName)}</p>`;
+    html += h(n ? `Today's lessons (${n})` : 'Today');
+    html += n ? ul(todayBooked.map(l => { const u = linkOf(l);
+        return li(`<strong>${clock(ms(l))}</strong> · ${esc(what(l))} · ${l.duration || ''} min ` + (u ? `· <a href="${esc(u)}">Join</a>` : '· <span style="color:#C2374F">no meeting link yet</span>')); }))
+      : '<p style="color:#555;margin:6px 0">No lessons are booked for today.</p>';
+    if (todayOpen) html += `<p style="color:#555;margin:6px 0">${todayOpen} open slot${todayOpen > 1 ? 's' : ''} still free today.</p>`;
+    if (noLink.length) html += h(`Needs a meeting link (${noLink.length})`) + ul(noLink.slice(0, 8).map(l => li(`${esc(when(ms(l)))} · ${esc(what(l))}`))) + (noLink.length > 8 ? `<p style="color:#555;margin:0">${more(noLink, 8)}</p>` : '');
+    if (toMark.length) html += h(`Waiting to be marked attended or absent (${toMark.length})`) + ul(toMark.slice(0, 8).map(l => li(`${esc(when(ms(l)))} · ${esc(what(l))}`))) + (toMark.length > 8 ? `<p style="color:#555;margin:0">${more(toMark, 8)}</p>` : '');
+    html += h('Next 7 days') + `<p style="margin:6px 0">${wb} booked, ${wo} open slot${wo === 1 ? '' : 's'}.</p>`;
+    html += `<p style="margin:22px 0"><a href="${esc(SITE)}/teacher.html" style="background:#C42B5B;color:#fff;padding:10px 18px;border-radius:20px;text-decoration:none">Open my dashboard</a></p>`;
+    html += '<p style="color:#777;font-size:12px">You can turn this email off under Email settings in your dashboard.</p></div>';
+
+    // only worth sending when there is a lesson today or something that needs checking
+    return { subject, text: tx.join('\n'), html, worth: n > 0 || attn > 0 };
+  }
+
+  let morningRunning = false;
+  async function morning() {
+    if (morningRunning) return { skipped: true };
+    morningRunning = true;
+    const out = { teachers: 0, sent: 0, errors: 0 };
+    try {
+      if (!N.emailReady()) return out;
+      const now = Date.now();
+      const due = [];
+      (await db.collection('users').where('role', '==', 'teacher').get()).docs.forEach(d => {
+        const t = d.data();
+        if (t.morningEmail === false || !t.email) return;           // switched off, or no address
+        const tz = okTz(t.tz) ? t.tz : DEFAULT_TZ, hr = dayOf(now, tz).hour;
+        if (hr >= MORNING_HOUR && hr < MORNING_HOUR + 3) due.push({ id: d.id, ...t });
+      });
+      out.teachers = due.length;
+      if (!due.length) return out;
+      const { by, links } = await digestData(now);
+      for (const t of due) {
+        const tz = okTz(t.tz) ? t.tz : DEFAULT_TZ, day = dayOf(now, tz);
+        const dg = buildDigest(t, by[t.id] || [], links, now);
+        if (!dg.worth) continue;
+        // one summary per teacher per day: the claim document can only be created once
+        const ref = db.collection('morningDigests').doc(t.id + '_' + day.y + p2(day.m) + p2(day.d));
+        try { await ref.create({ teacherId: t.id, at: FieldValue.serverTimestamp() }); }
+        catch (e) { if (e.code !== 6 && !/already exists/i.test(e.message || '')) console.error('[morning:claim]', e.message); continue; }
+        try { await N.sendEmail(t.email, dg.subject, dg.text, dg.html); out.sent++; }
+        catch (e) { out.errors++; console.error('[morning:email]', e.message); await ref.delete().catch(() => {}); }   // let the next run retry
+      }
+    } finally { morningRunning = false; }
+    return out;
+  }
+
+  async function requireUser(req, res, next) {
+    try {
+      const tok = (req.headers.authorization || '').replace('Bearer ', '');
+      if (!tok) return res.status(401).json({ error: 'Please log in first' });
+      req.uid = (await admin.auth().verifyIdToken(tok)).uid;
+      next();
+    } catch (e) { res.status(401).json({ error: 'Please log in again' }); }
+  }
+  // A teacher asks for a preview of their own summary (any time, even on a quiet day)
+  r.post('/morning-test', requireUser, async (req, res) => {
+    try {
+      const u = await db.collection('users').doc(req.uid).get(), t = u.exists ? { id: u.id, ...u.data() } : null;
+      if (!t || t.role !== 'teacher') return res.status(403).json({ error: 'Teachers only' });
+      if (!t.email) return res.status(400).json({ error: 'Your account has no email address' });
+      if (!N.emailReady()) return res.status(400).json({ error: 'Email is not set up on the server (BREVO_API_KEY and MAIL_FROM)' });
+      const now = Date.now(), { by, links } = await digestData(now), dg = buildDigest(t, by[t.id] || [], links, now);
+      await N.sendEmail(t.email, '[Preview] ' + dg.subject, dg.text, dg.html);
+      res.json({ ok: true, to: t.email });
+    } catch (e) { console.error('[morning-test]', e.message); res.status(500).json({ error: 'Could not send the preview' }); }
+  });
+
   // A free timer service (such as cron-job.org) calls this every 10 minutes. It also keeps the server awake.
   // Prefer sending the secret in the x-cron-key header so it does not appear in logs.
   const same = (a, b) => { const h = s => crypto.createHash('sha256').update(String(s)).digest(); return crypto.timingSafeEqual(h(a), h(b)); };
@@ -79,7 +217,7 @@ module.exports = (admin) => {
     next();
   };
   r.get('/run', guard, async (req, res) => {
-    try { res.json(await run()); } catch (e) { console.error('[reminders]', e.message); res.status(500).json({ error: 'Failed' }); }
+    try { res.json(await r.run()); } catch (e) { console.error('[reminders]', e.message); res.status(500).json({ error: 'Failed' }); }
   });
   // Send yourself a sample email to confirm the mail settings work: /api/reminders/test-email?to=you@example.com (with the x-cron-key header, or ?key=...)
   r.get('/test-email', guard, async (req, res) => {
@@ -88,62 +226,7 @@ module.exports = (admin) => {
     catch (e) { res.status(400).json({ error: e.message }); }
   });
 
-  // ---- Teacher morning summary ----
-  const tkey = (d, tz) => d.toLocaleDateString('en-CA', { timeZone: tz });            // e.g. 2026-11-07
-  const tclock = (d, tz) => d.toLocaleTimeString('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit' });
-
-  async function morningSummary(uid, t) {
-    const tz = t.tz || 'Africa/Nairobi';
-    const now = new Date(), today = tkey(now, tz);
-    const snap = await db.collection('lessons').where('teacherId', '==', uid).get();
-    const lessons = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.start.toMillis() - b.start.toMillis());
-    const links = {};
-    (await db.collection('lessonLinks').where('teacherId', '==', uid).get()).forEach(d => links[d.id] = d.data().meetLink);
-    const link = l => links[l.id] || l.meetLink || '';
-
-    const live = l => ['open', 'booked'].includes(l.status);
-    const todays = lessons.filter(l => live(l) && tkey(l.start.toDate(), tz) === today);
-    const noLink = lessons.filter(l => live(l) && l.start.toMillis() >= now.getTime() && !link(l));
-    const unmarked = lessons.filter(l => l.status === 'booked' && l.start.toMillis() < now.getTime());
-    const label = l => `${tclock(l.start.toDate(), tz)} · ${l.studentName || 'Open slot'} · ${l.courseName || l.type || 'Lesson'}`;
-    const when = l => `${tkey(l.start.toDate(), tz)} ${tclock(l.start.toDate(), tz)}`;
-
-    const quiet = !todays.length && !noLink.length && !unmarked.length;
-    let text = `Hujambo ${String(t.name || 'teacher').split(' ')[0]}!\n\n`, html = `<p>Hujambo ${esc(String(t.name || 'teacher').split(' ')[0])}!</p>`;
-    if (todays.length) {
-      text += "Today's lessons:\n" + todays.map(l => `- ${label(l)}${link(l) ? '\n  Join: ' + link(l) : ' (no link yet)'}`).join('\n') + '\n\n';
-      html += "<h3>Today's lessons</h3><ul>" + todays.map(l => `<li>${esc(label(l))}${link(l) ? ` – <a href="${esc(link(l))}">Join</a>` : ' (no link yet)'}</li>`).join('') + '</ul>';
-    }
-    if (noLink.length) {
-      text += `Lessons that still need a meeting link (${noLink.length}):\n` + noLink.map(l => `- ${when(l)} · ${l.studentName || 'Open slot'}`).join('\n') + '\n\n';
-      html += `<h3>Need a meeting link (${noLink.length})</h3><ul>` + noLink.map(l => `<li>${esc(when(l))} · ${esc(l.studentName || 'Open slot')}</li>`).join('') + '</ul>';
-    }
-    if (unmarked.length) {
-      text += `Waiting to be marked attended or absent (${unmarked.length}):\n` + unmarked.map(l => `- ${when(l)} · ${l.studentName || ''}`).join('\n') + '\n\n';
-      html += `<h3>Mark attended or absent (${unmarked.length})</h3><ul>` + unmarked.map(l => `<li>${esc(when(l))} · ${esc(l.studentName || '')}</li>`).join('') + '</ul>';
-    }
-    if (quiet) { text += 'Nothing to report today.\n\n'; html += '<p>Nothing to report today.</p>'; }
-    text += `Open your dashboard: ${SITE}/teacher.html`;
-    html += `<p><a href="${esc(SITE)}/teacher.html">Open your dashboard</a></p>`;
-    return { subject: 'Your SemaAfrica day: ' + today, text, html, quiet };
-  }
-
-  // The teacher's "Send preview" button: sends the summary to the logged-in teacher
-  r.post('/morning-test', async (req, res) => {
-    try {
-      const m = /^Bearer (.+)$/.exec(req.get('authorization') || '');
-      if (!m) return res.status(401).json({ error: 'Please log in again' });
-      let dec; try { dec = await admin.auth().verifyIdToken(m[1]); } catch { return res.status(401).json({ error: 'Please log in again' }); }
-      const t = (await db.collection('users').doc(dec.uid).get()).data() || {};
-      if (t.role !== 'teacher') return res.status(403).json({ error: 'Teachers only' });
-      if (!t.email) return res.status(400).json({ error: 'Your account has no email address' });
-      if (!N.emailReady()) return res.status(400).json({ error: 'Email settings (BREVO_API_KEY and MAIL_FROM) are not set on the server' });
-      const s = await morningSummary(dec.uid, t);
-      await N.sendEmail(t.email, s.subject, s.text, s.html);
-      res.json({ ok: true, to: t.email });
-    } catch (e) { console.error('[morning-test]', e.message); res.status(500).json({ error: 'Could not send the preview' }); }
-  });
-
-  r.run = run;
+  // The 10-minute timer sends class reminders and, in the morning hours, each teacher's summary
+  r.run = async () => { const out = await run(); out.morning = await morning().catch(e => ({ error: e.message })); return out; };
   return r;
 };
