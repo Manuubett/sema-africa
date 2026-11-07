@@ -52,7 +52,7 @@ setInterval(() => reminders.run().catch(e => console.error('[reminders]', e.mess
 
 // Health check only. Deliberately no endpoints that reveal env settings, database or file names.
 app.get('/api/health', (req, res) => res.json({ ok: true, service: 'semaafrica', mode: process.env.PAYMENTS_MODE || 'test', project: PROJECT_ID, cancelHours: Number(process.env.CANCEL_HOURS || 12) }));
-
+app.get('/', (req, res) => res.send('SemaAfrica server OK'));
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err, req, res, next) => { console.error('[error]', err.message); res.status(500).json({ error: 'Server error' }); });
 
