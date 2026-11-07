@@ -9,9 +9,8 @@ module.exports = (admin) => {
 
   const err = (m, s) => Object.assign(new Error(m), { status: s });
   const fail = (res, e) => { if (!e.status) console.error('[lessons]', e.message); res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' }); };
-  // What an unbooked slot looks like (matches how teachers create open slots).
-  // reminders is cleared so the next student to book this slot gets their own reminders.
-  const OPEN = () => ({ status: 'open', studentId: '', studentName: '', enrollmentId: FieldValue.delete(), reminders: FieldValue.delete() });
+  // What an unbooked slot looks like (matches how teachers create open slots)
+  const OPEN = () => ({ status: 'open', studentId: '', studentName: '', enrollmentId: FieldValue.delete() });
   const early = (d) => d.start.toDate().getTime() - Date.now() >= HOURS * 3600e3;
 
   async function requireUser(req, res, next) {
@@ -59,7 +58,8 @@ module.exports = (admin) => {
         if (!early(o.data())) throw err('It is too close to the class to move it. You can cancel, but the lesson will be used.', 400);
         if (!n.exists || n.data().status !== 'open' || n.data().start.toDate() <= new Date()) throw err('That time was just taken. Please pick another.', 409);
         const od = o.data();
-        tx.update(nref, { status: 'booked', studentId: req.uid, studentName: od.studentName || '', reminders: FieldValue.delete(), ...(od.enrollmentId ? { enrollmentId: od.enrollmentId } : {}) });
+        if ((od.type === 'Trial') !== (n.data().type === 'Trial')) throw err('A trial lesson can only be moved to another trial time.', 400);
+        tx.update(nref, { status: 'booked', studentId: req.uid, studentName: od.studentName || '', ...(od.enrollmentId ? { enrollmentId: od.enrollmentId } : {}) });
         tx.update(oref, OPEN());
         log(tx, oref.id, req.uid, 'student_reschedule', false);
       });
