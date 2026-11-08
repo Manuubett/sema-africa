@@ -213,11 +213,22 @@ dialog .btn{margin-top:4px}
 
 <script>
 (function(){
-  function f(m){var v=document.getElementById("view"),t=document.getElementById("title");
-    if(t){t.textContent="Something went wrong";}
-    if(v){v.innerHTML='<div class="empty"><strong></strong><p>Take a screenshot of this message and send it to me. Usual causes: Firestore rules not published, the Firestore database not created, a missing file in the js folder, or wrong Firebase settings.</p></div>';v.querySelector("strong").textContent=m;}}
-  addEventListener("unhandledrejection",function(e){f(String(e.reason&&(e.reason.code||e.reason.message)||e.reason))});
-  addEventListener("error",function(e){f(e.message||"A script failed to load")});
+  var shown=false;
+  function f(){
+    if(shown)return;shown=true;
+    var v=document.getElementById("view"),t=document.getElementById("title"),off=navigator.onLine===false;
+    if(t)t.textContent=off?"You are offline":"We could not load this page";
+    if(v){
+      v.innerHTML='<div class="empty"><strong></strong><p></p><button class="btn" type="button" onclick="location.reload()">Try again</button></div>';
+      v.querySelector("strong").textContent=off?"No internet connection":"Something went wrong";
+      v.querySelector("p").textContent=off
+        ?"Please check your network and try again. Your lessons and progress are safe."
+        :"Please check your connection and try again. If the problem continues, contact your teacher or SemaAfrica support.";
+    }
+  }
+  addEventListener("unhandledrejection",f);
+  addEventListener("error",f);
+  addEventListener("online",function(){if(shown)location.reload()});
 })();
 </script>
 <script type="module">
@@ -234,6 +245,10 @@ const fd=v=>{const d=dt(v);return d?d.toLocaleDateString([],{day:"numeric",month
 const money=(a,c)=>(c==="KES"?"KES ":"$")+Number(a||0).toLocaleString();
 const empty=(t,p,a)=>`<div class="empty"><strong>${t}</strong><p>${p}</p>${a?`<a class="btn" href="${a[1]}"${a[1].length>1&&a[1][0]==="#"?` data-go="${a[1].slice(1)}"`:""}>${a[0]}</a>`:""}</div>`;
 const flash=(t,ok=true)=>{$("flash").className="msg "+(ok?"ok":"err");$("flash").textContent=t;if(t)scrollTo({top:0,behavior:"smooth"})};
+// Turns raw browser/network errors into a clear, professional message
+const friendly=x=>(!navigator.onLine||/failed to fetch|load failed|networkerror/i.test((x&&x.message)||""))
+  ?"No internet connection. Please check your network and try again."
+  :((x&&x.message&&!x.code)?x.message:"Something went wrong. Please try again.");
 let uid,me,enr=[],mine=[],openSlots=[],slotsErr="",prog=[],pays=[],mats=[],catalog=[],cur="overview",
     quizzes=[],attempts=[],qz=null,qAns=[],qDone=null,qErr=false;
 
@@ -276,16 +291,21 @@ const isTr=t=>/^trial/i.test(t||"");
 const fit=l=>usable().some(e=>isTr(e.type)===isTr(l.type));
 // A booked class stays "upcoming" until it has finished, not just until it has started
 const upcoming=()=>mine.filter(l=>l.status==="booked"&&endMs(l)>Date.now()).sort((a,b)=>dt(a.start)-dt(b.start));
-const joinHtml=(l,st)=>st==="ended"?"<small>Class ended</small>"
-  :!l.meetLink?"<small>Link coming soon</small>"
-  :st==="live"?`<a class="btn sm" href="${esc(l.meetLink)}" target="_blank" rel="noopener">Join class</a>`
+const joinHtml=(l,st)=>st==="ended"?'<button class="btn sm" type="button" disabled>Class ended</button>'
+  :st==="live"?(l.meetLink?`<a class="btn sm" href="${esc(l.meetLink)}" target="_blank" rel="noopener">Join class</a>`
+                          :'<button class="btn sm" type="button" disabled>Link coming soon</button>')
   :`<button class="btn sm" type="button" disabled>Join opens ${opensTxt(l)}</button>`;
-const join=l=>{const st=joinState(l);return `<span class="jn" style="display:contents" data-id="${l.id}" data-st="${st}">${joinHtml(l,st)}</span>`};
+const jkey=l=>joinState(l)+(l.meetLink?"1":"0");
+const join=l=>`<span class="jn" style="display:contents" data-id="${l.id}" data-st="${jkey(l)}">${joinHtml(l,joinState(l))}</span>`;
 // Re-check every 15 seconds so the button switches on and off without a page refresh
-function tickJoin(){let ended=false;
+async function tickJoin(){
+  // pick up a link the teacher added after this page loaded (only while the class is live)
+  await Promise.all(mine.filter(l=>l.status==="booked"&&!l.meetLink&&joinState(l)==="live").map(async l=>{
+    try{const s=await getDoc(doc(db,"lessonLinks",l.id));if(s.exists())l.meetLink=s.data().meetLink}catch{}}));
+  let ended=false;
   document.querySelectorAll(".jn").forEach(el=>{const l=mine.find(x=>x.id===el.dataset.id);if(!l)return;
-    const st=joinState(l);if(st===el.dataset.st)return;
-    el.dataset.st=st;el.innerHTML=joinHtml(l,st);if(st==="ended")ended=true});
+    const k=jkey(l);if(k===el.dataset.st)return;
+    el.dataset.st=k;el.innerHTML=joinHtml(l,joinState(l));if(joinState(l)==="ended")ended=true});
   // when a class finishes, move it out of "next class" / "upcoming" (keep scroll position)
   if(ended&&(cur==="overview"||cur==="upcoming")&&!document.querySelector("dialog[open]")){const y=scrollY;show(cur);scrollTo(0,y)}}
 setInterval(tickJoin,15000);
@@ -365,14 +385,17 @@ const ACT={
   openPay(c)},
  async free(b){try{await claimFree(catalog.find(c=>c.id===b.dataset.id))}finally{b.disabled=false}},
  async refresh(b){await load();show(cur);flash("Times updated.")},
- async open(b){const w=window.open("","_blank");try{const r=await fetch(WORKER_URL+"/file/"+b.dataset.id,{headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.error||"Could not open that file.")}w.location=URL.createObjectURL(await r.blob())}catch(x){w.close();flash(x.message||"Could not open that file.",false)}b.disabled=false},
+ async open(b){const w=window.open("","_blank");try{const r=await fetch(WORKER_URL+"/file/"+b.dataset.id,{headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.error||"Could not open that file.")}w.location=URL.createObjectURL(await r.blob())}catch(x){if(w)w.close();flash(friendly(x),false)}b.disabled=false},
  // Book with the plan that matches the lesson: a trial time uses the trial plan, a regular time uses a regular plan
  async book(b){const l=openSlots.find(x=>x.id===b.dataset.id),e=usable().find(x=>isTr(x.type)===isTr(l&&l.type));if(!l||!e){b.disabled=false;return}if(!confirm("Book "+fdt(l.start)+"? This uses 1 lesson.")){b.disabled=false;return}
   try{const w=writeBatch(db);
    w.update(doc(db,"lessons",l.id),{status:"booked",studentId:uid,studentName:me.name,enrollmentId:e.id});
    w.update(doc(db,"enrollments",e.id),{lessonsLeft:e.lessonsLeft-1});
    await w.commit();await load();show("upcoming");flash("Booked! Your meeting link is below once your teacher adds it.")}
-  catch(x){await load();show("book");flash("Sorry, that time was just taken or is no longer available. Please pick another.",false)}}
+  catch(x){
+    if(!navigator.onLine){b.disabled=false;flash("No internet connection. Please check your network and try again.",false);return}
+    try{await load();show("book")}catch{}
+    flash("Sorry, that time was just taken or is no longer available. Please pick another.",false)}}
 };
 
 /* ── Quizzes ── */
@@ -450,7 +473,7 @@ $("payDlg").onclick=async e=>{const b=e.target.closest("[data-p]");if(!b)return;
       payId=d.paymentId;payAmt=d.amount;drawPay("wait");poll()}
     else if(a==="check"){const s=await api("/status/"+payId);if(s.status==="paid")await paid();else{m().className="msg";m().textContent="Not confirmed yet. M-Pesa can take up to a minute."}}
     else if(a==="sim"){await api("/simulate/"+payId,"POST");await paid()}
-  }catch(err){const el=m();if(el){el.className="msg err";el.textContent=err.message}b.disabled=false}};
+  }catch(err){const el=m();if(el){el.className="msg err";el.textContent=friendly(err)}b.disabled=false}};
 /* ── cancel and reschedule (the server returns the lesson safely) ── */
 let cancelHrs=12;
 if(SERVER_URL)fetch(SERVER_URL+"/api/health").then(r=>r.json()).then(h=>{if(h.cancelHours)cancelHrs=h.cancelHours}).catch(()=>{});
@@ -485,7 +508,7 @@ Object.assign(ACT,{
 });
 $("rsDlg").onclick=async e=>{if(e.target.closest("[data-close]"))return $("rsDlg").close();const b=e.target.closest("[data-mv]");if(!b)return;b.disabled=true;
   try{await lapi("/reschedule",{lessonId:b.dataset.from,newLessonId:b.dataset.mv});$("rsDlg").close();await load();show("upcoming");flash("Your class has been moved.")}
-  catch(err){$("rsDlg").close();await load();show("upcoming");flash(err.message,false)}};
+  catch(err){$("rsDlg").close();try{await load();show("upcoming")}catch{}flash(friendly(err),false)}};
 
 /* ── navigation: top pills on phones and tablets, sidebar on desktop ── */
 const NAV=[["overview","Home"],["book","Book"],["upcoming","Classes"],["progress","Progress"],["quizzes","Quizzes"],["browse","Courses"],["courses","My courses"],["notes","Notes"],["recordings","Recordings"],["reminders","Reminders"],["payments","Payments"]];
@@ -511,18 +534,18 @@ function show(k){if(k!=="quizzes"){qz=null;qDone=null}cur=k;const [t,h]=PAGES[k]
   scrollTo(0,0)}
 view.onclick=async e=>{const g=e.target.closest("[data-go]");if(g){e.preventDefault();return go(g.dataset.go)}
   const a=e.target.closest("a[href='#']");if(a){e.preventDefault();return go("book")}
-  const b=e.target.closest("[data-act]");if(!b)return;b.disabled=true;try{await ACT[b.dataset.act](b)}catch(x){flash(x.message&&!x.code?x.message:"That did not work.",false);b.disabled=false}};
+  const b=e.target.closest("[data-act]");if(!b)return;b.disabled=true;try{await ACT[b.dataset.act](b)}catch(x){flash(friendly(x),false);b.disabled=false}};
 onAuthStateChanged(auth,async u=>{
   if(!u)return location.href="auth.html";
   uid=u.uid;const s=await getDoc(doc(db,"users",uid));
   me=s.exists()?s.data():{name:u.displayName||"student",role:"student"};
   if(me.role!=="student")return location.href=HOME[me.role]||HOME.student;
-  try{await load()}catch(e){flash("Could not load your data. Check your connection and refresh.",false)}
+  try{await load()}catch(e){flash("We could not load your data. Please check your internet connection and refresh the page.",false)}
   buildNav();show("overview");
   const pl=sessionStorage.getItem("sema_plan");
   if(pl){sessionStorage.removeItem("sema_plan");const c=catalog.find(x=>x.id===pl);
     if(c){show("browse");
-      if(isFree(c)){try{await claimFree(c)}catch(x){flash(x.message||"Could not start your trial lesson.",false)}}
+      if(isFree(c)){try{await claimFree(c)}catch(x){flash(friendly(x),false)}}
       else openPay(c)}}
 });
 </script></body></html>
