@@ -53,6 +53,11 @@ module.exports = (admin) => {
     const ls = await db.collection('lessonLinks').doc(l.id).get();
     const link = (ls.exists && ls.data().meetLink) || l.meetLink || SITE + '/student.html';
     const soon = soonText(diff), canMove = diff >= HOURS * 3600e3;
+    // The lesson stores the teacher's name; if an older lesson lacks it, look it up from the teacher's account
+    let teacher = String(l.teacherName || '').trim();
+    if (!teacher && l.teacherId) {
+      try { teacher = String(((await db.collection('users').doc(l.teacherId).get()).data() || {}).name || '').trim(); } catch { /* the email still goes out without it */ }
+    }
     const emailOk = u.remindEmail !== false && u.email && N.emailReady();
     const waOk = u.remindWhatsapp && u.phone && N.waReady();
     const res = { sent: false, errors: 0, reason: '' };
@@ -63,14 +68,19 @@ module.exports = (admin) => {
       return res;
     }
     if (emailOk) {
-      const lesson = [l.courseName, l.topic].filter(Boolean).join(' · ');
-      const text = `Hujambo ${first}!\n\nYour SemaAfrica class ${soon}: ${when}.` + (lesson ? `\nLesson: ${lesson}` : '') + `\nJoin here: ${link}` +
-        (note ? `\n\nNote from your teacher: ${note}` : '') +
+      // The course and the topic often hold the same words; show them once
+      const ca = String(l.courseName || '').trim(), tp = String(l.topic || '').trim();
+      const lesson = !tp || ca === tp || ca.includes(tp) ? ca : tp.includes(ca) ? tp : ca + ' · ' + tp;
+      const noteFrom = teacher || 'your teacher';
+      const text = `Hujambo ${first}!\n\nYour SemaAfrica class ${soon}: ${when}.` +
+        (teacher ? `\nTeacher: ${teacher}` : '') + (lesson ? `\nLesson: ${lesson}` : '') + `\nJoin here: ${link}` +
+        (note ? `\n\nNote from ${noteFrom}: ${note}` : '') +
         (canMove ? `\n\nNeed to move it? Open your dashboard at least ${HOURS} hours before class: ${SITE}/student.html` : '') + `\n\nKaribu sana!`;
       const html = `<p>Hujambo ${esc(first)}!</p><p>Your SemaAfrica class ${soon}:<br><strong>${esc(when)}</strong></p>` +
-        (lesson ? `<p style="color:#555">Lesson: ${esc(lesson)}</p>` : '') +
+        (teacher ? `<p style="margin:0 0 4px">Teacher: <strong>${esc(teacher)}</strong></p>` : '') +
+        (lesson ? `<p style="color:#555;margin:0 0 12px">Lesson: ${esc(lesson)}</p>` : '') +
         `<p><a href="${esc(link)}" style="background:#C42B5B;color:#fff;padding:10px 18px;border-radius:20px;text-decoration:none">Join class</a></p>` +
-        (note ? `<p style="border-left:3px solid #C42B5B;padding-left:10px">Note from your teacher: ${esc(note)}</p>` : '') +
+        (note ? `<p style="border-left:3px solid #C42B5B;padding-left:10px">Note from ${esc(noteFrom)}: ${esc(note)}</p>` : '') +
         (canMove ? `<p style="color:#555">Need to move it? <a href="${esc(SITE)}/student.html">Open your dashboard</a> at least ${HOURS} hours before class.</p>` : '') +
         `<p>Karibu sana!</p>`;
       const subject = diff <= 24 * 36e5 ? 'Your Swahili class ' + soon : 'Reminder: your Swahili class on ' + when;
