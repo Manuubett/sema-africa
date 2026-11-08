@@ -90,6 +90,7 @@ h3.sec{font:700 1.2rem var(--display);margin:26px 0 10px}
 .hero small{color:inherit;opacity:.8}
 .hero h2{font:800 1.8rem/1.15 var(--display);margin:6px 0 16px;letter-spacing:-.02em}
 .hero .btn{background:var(--sun);color:#14213A;border-color:var(--sun);width:100%}
+.hero .btn:disabled{background:transparent;color:inherit;border-color:currentColor;opacity:.75}
 .hero a:not(.btn){color:var(--sun)}
 .hero::after{content:"";position:absolute;right:-30px;top:-30px;width:110px;height:110px;border-radius:50%;
   background:repeating-radial-gradient(circle,rgba(255,255,255,.14) 0 6px,transparent 6px 14px);pointer-events:none}
@@ -235,6 +236,14 @@ const empty=(t,p,a)=>`<div class="empty"><strong>${t}</strong><p>${p}</p>${a?`<a
 const flash=(t,ok=true)=>{$("flash").className="msg "+(ok?"ok":"err");$("flash").textContent=t;if(t)scrollTo({top:0,behavior:"smooth"})};
 let uid,me,enr=[],mine=[],openSlots=[],slotsErr="",prog=[],pays=[],mats=[],catalog=[],cur="overview",
     quizzes=[],attempts=[],qz=null,qAns=[],qDone=null,qErr=false;
+
+/* ── Join button timing: opens JOIN_EARLY minutes before the start, closes when the class ends ── */
+const JOIN_EARLY=10;
+const endMs=l=>dt(l.start).getTime()+(Number(l.duration)||45)*60000;
+const joinState=l=>{const n=Date.now(),s=dt(l.start).getTime();return n>=endMs(l)?"ended":n>=s-JOIN_EARLY*60000?"live":"wait"};
+const opensTxt=l=>{const d=new Date(dt(l.start).getTime()-JOIN_EARLY*60000),t={hour:"2-digit",minute:"2-digit"};
+  return d.toDateString()===new Date().toDateString()?"at "+d.toLocaleTimeString([],t):d.toLocaleString([],{weekday:"short",...t})};
+
 async function load(){
   const q=(c,f,v)=>getDocs(query(collection(db,c),where(f,"==",v))).then(s=>s.docs.map(d=>({id:d.id,...d.data()})));
   const [e,m,p,y,m1,m2,cs]=await Promise.all([q("enrollments","userId",uid),q("lessons","studentId",uid),q("progress","studentId",uid),q("payments","userId",uid),q("materials","studentId",uid),q("materials","studentId",""),getDocs(collection(db,"courses"))]);
@@ -255,7 +264,7 @@ async function load(){
     quizzes=[...qa,...qb2].filter(x=>!sn[x.id]&&(sn[x.id]=1)).sort((x,y)=>(dt(y.createdAt)||0)-(dt(x.createdAt)||0));
     attempts=qc.sort((x,y)=>(dt(y.date)||0)-(dt(x.date)||0));
   }catch{qErr=true;quizzes=[];attempts=[]}
-  await Promise.all(mine.filter(l=>l.status==="booked"&&dt(l.start).getTime()>Date.now()-45*60000).map(async l=>{
+  await Promise.all(mine.filter(l=>l.status==="booked"&&endMs(l)>Date.now()).map(async l=>{
     try{const s=await getDoc(doc(db,"lessonLinks",l.id));if(s.exists())l.meetLink=s.data().meetLink}catch{}}));
 }
 const usable=()=>enr.filter(e=>e.status==="active"&&e.lessonsLeft>0&&(!e.expiresAt||dt(e.expiresAt)>new Date()));
@@ -265,8 +274,22 @@ const isFree=c=>c.type==="Trial"&&!(Number(c.kes)>0);
 // Trial lessons and regular lessons are booked separately: a plan only books times of its own kind
 const isTr=t=>/^trial/i.test(t||"");
 const fit=l=>usable().some(e=>isTr(e.type)===isTr(l.type));
-const upcoming=()=>mine.filter(l=>l.status==="booked"&&dt(l.start).getTime()>Date.now()-45*60000).sort((a,b)=>dt(a.start)-dt(b.start));
-const join=l=>l.meetLink?`<a class="btn sm" href="${esc(l.meetLink)}" target="_blank" rel="noopener">Join class</a>`:"<small>Link coming soon</small>";
+// A booked class stays "upcoming" until it has finished, not just until it has started
+const upcoming=()=>mine.filter(l=>l.status==="booked"&&endMs(l)>Date.now()).sort((a,b)=>dt(a.start)-dt(b.start));
+const joinHtml=(l,st)=>st==="ended"?"<small>Class ended</small>"
+  :!l.meetLink?"<small>Link coming soon</small>"
+  :st==="live"?`<a class="btn sm" href="${esc(l.meetLink)}" target="_blank" rel="noopener">Join class</a>`
+  :`<button class="btn sm" type="button" disabled>Join opens ${opensTxt(l)}</button>`;
+const join=l=>{const st=joinState(l);return `<span class="jn" style="display:contents" data-id="${l.id}" data-st="${st}">${joinHtml(l,st)}</span>`};
+// Re-check every 15 seconds so the button switches on and off without a page refresh
+function tickJoin(){let ended=false;
+  document.querySelectorAll(".jn").forEach(el=>{const l=mine.find(x=>x.id===el.dataset.id);if(!l)return;
+    const st=joinState(l);if(st===el.dataset.st)return;
+    el.dataset.st=st;el.innerHTML=joinHtml(l,st);if(st==="ended")ended=true});
+  // when a class finishes, move it out of "next class" / "upcoming" (keep scroll position)
+  if(ended&&(cur==="overview"||cur==="upcoming")&&!document.querySelector("dialog[open]")){const y=scrollY;show(cur);scrollTo(0,y)}}
+setInterval(tickJoin,15000);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)tickJoin()});
 const matRow=m=>`<div class="row"><div><strong>${esc(m.title)}</strong> <span class="pill">${esc(m.type||"Notes")}</span> <span class="pill">${esc(m.level||"All levels")}</span><small>Added ${fd(m.createdAt)}</small></div>
   ${m.link?`<a class="btn line sm" href="${esc(m.link)}" target="_blank" rel="noopener">Watch</a>`:`<button class="btn line sm" data-act="open" data-id="${m.id}">Open</button>`}</div>`;
 const refreshBtn='<button class="btn line sm" data-act="refresh" type="button">Refresh times</button>';
