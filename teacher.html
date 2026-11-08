@@ -42,6 +42,17 @@ async function staffCancel(id){
   }finally{clearTimeout(t)}
 }
 
+// A teacher or admin sends a reminder by hand. The server checks who may remind which lesson.
+async function notifyLessons(ids,note){
+  const c=new AbortController(),t=setTimeout(()=>c.abort(),75000);
+  try{
+    const r=await fetch(SERVER_URL+"/api/reminders/notify",{method:"POST",signal:c.signal,headers:{"Content-Type":"application/json",Authorization:"Bearer "+await auth.currentUser.getIdToken()},body:JSON.stringify({lessonIds:ids,note})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||"Could not send");
+    const sk=d.skipped||[];
+    return d.sent+" reminder"+(d.sent===1?"":"s")+" sent"+(sk.length?". Skipped "+sk.length+": "+[...new Set(sk.map(x=>x.reason))].join("; "):"")+".";
+  }catch(e){if(e.name==="AbortError")throw new Error("The server took too long to answer. Wait a minute, then try again.");throw e}finally{clearTimeout(t)}
+}
 const $=id=>document.getElementById(id), view=$("view");
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const T=l=>l.start.toDate(), fd=d=>d.toLocaleDateString([],{weekday:"short",day:"numeric",month:"short"}), ft=d=>d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
@@ -170,7 +181,7 @@ timetable:["Weekly timetable",()=>{
   <div class="nav2">${btn("prev","","Previous week")}<strong>${fd(days[0])} – ${fd(days[6])}</strong>${btn("next","","Next week")}${btn("today","","This week")}
   <label class="chk"><input type="checkbox" id="sc" ${showC?"checked":""}> Show cancelled</label></div>
   <p><small>Times are shown in your device's time zone${TZ?" ("+esc(TZ)+")":""}.</small></p>
-  <div class="week">${days.map(d=>`<div class="day ${d.toDateString()===todayS?"today":""}"><h3>${fd(d)}${d.toDateString()===todayS?" · Today":""}</h3>${vis.filter(l=>T(l).toDateString()===d.toDateString()).map(l=>`<div class="slot ${esc(l.status)}"><strong>${ft(T(l))}</strong> ${l.duration}m<span class="st">${ST[l.status]||esc(l.status)}</span>${esc(l.studentName||"Open")}<small>${esc(l.courseName||l.type)}${l.topic?" · "+esc(l.topic):""}</small><div class="acts">${l.status!=="cancelled"?joinBtn(l):""}${isLive(l)?btn("edit",l.id,"Edit"):""}${l.status==="booked"&&isLive(l)?btn("cancelled",l.id,"Cancel"):""}${l.status==="booked"&&!isLive(l)?btn("attended",l.id,"Attended",false)+btn("absent",l.id,"Absent"):""}${["open","cancelled"].includes(l.status)?btn("dellesson",l.id,"Delete"):""}${["attended","absent"].includes(l.status)?"<small>Kept as a record</small>":""}</div></div>`).join("")}</div>`).join("")}</div>`},
+  <div class="week">${days.map(d=>`<div class="day ${d.toDateString()===todayS?"today":""}"><h3>${fd(d)}${d.toDateString()===todayS?" · Today":""}</h3>${vis.filter(l=>T(l).toDateString()===d.toDateString()).map(l=>`<div class="slot ${esc(l.status)}"><strong>${ft(T(l))}</strong> ${l.duration}m<span class="st">${ST[l.status]||esc(l.status)}</span>${esc(l.studentName||"Open")}<small>${esc(l.courseName||l.type)}${l.topic?" · "+esc(l.topic):""}</small><div class="acts">${l.status!=="cancelled"?joinBtn(l):""}${isLive(l)?btn("edit",l.id,"Edit"):""}${l.status==="booked"&&isLive(l)?btn("remind",l.id,"Remind")+btn("cancelled",l.id,"Cancel"):""}${l.status==="booked"&&!isLive(l)?btn("attended",l.id,"Attended",false)+btn("absent",l.id,"Absent"):""}${["open","cancelled"].includes(l.status)?btn("dellesson",l.id,"Delete"):""}${["attended","absent"].includes(l.status)?"<small>Kept as a record</small>":""}</div></div>`).join("")}</div>`).join("")}</div>`},
  ()=>{
   $("sc").onchange=e=>{showC=e.target.checked;show("timetable")};
   if($("spl"))$("spl").onchange=e=>{const t=planText(e.target.value);if(t)$("stp").value=t};
@@ -208,10 +219,12 @@ library:["Lesson library",()=>{
 upcoming:["Upcoming lessons",()=>{const now=Date.now();
   const l=lessons.filter(x=>T(x)>=now&&["open","booked"].includes(x.status));
   const missing=l.filter(x=>!linkOf(x)).length;
+  const todayB=l.filter(x=>x.status==="booked"&&T(x).toDateString()===new Date().toDateString());
   const e=editL&&l.find(x=>x.id===editL);
   return `<p class="msg" id="m"></p>`+(e?editForm(e):"")+
+  (todayB.length?`<div class="row"><div><strong>${todayB.length} student${todayB.length>1?"s have":" has"} class later today</strong><small>Send them all a reminder now, with an optional note.</small></div><div class="acts">${btn("remindall","","Remind all today",false)}</div></div>`:"")+
   (missing?`<div class="row"><div><strong>${missing} upcoming lesson${missing>1?"s":""} without a meeting link</strong><small>Add one link to all of them at once, or use Add link on each lesson.</small></div><div class="acts">${btn("bulk","","Add link to all",false)}</div></div>`:"")+
-  (l.length?l.map(x=>lessonRow(x,linkBtn(x)+btn("edit",x.id,"Edit")+(x.status==="open"?btn("dellesson",x.id,"Delete"):btn("cancelled",x.id,"Cancel lesson")))).join(""):empty("No upcoming lessons","Add slots in Weekly timetable."))},
+  (l.length?l.map(x=>lessonRow(x,linkBtn(x)+btn("edit",x.id,"Edit")+(x.status==="booked"?btn("remind",x.id,"Remind"):"")+(x.status==="open"?btn("dellesson",x.id,"Delete"):btn("cancelled",x.id,"Cancel lesson")))).join(""):empty("No upcoming lessons","Add slots in Weekly timetable."))},
  ()=>{const f=$("editF");if(!f)return;
   if($("epl"))$("epl").onchange=e=>{const t=planText(e.target.value);if(t)$("etp").value=t};
   f.onsubmit=e=>{e.preventDefault();busy(sub(f),async()=>{
@@ -324,6 +337,14 @@ view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const
   if(a==="today"){week=mon(new Date());return show("timetable")}
   if(a==="prog"){pick=id;return show("progress")}
   if(a==="sched"){schedPre=id;return show("timetable")}
+  if(a==="remind"||a==="remindall"){
+    if(!SERVER_URL){say("The server is not set up.",true);return}
+    const ids=a==="remind"?[id]:lessons.filter(x=>x.status==="booked"&&isLive(x)&&T(x).toDateString()===new Date().toDateString()).map(x=>x.id);
+    if(!ids.length)return;
+    const who=a==="remind"?((lessons.find(x=>x.id===id)||{}).studentName||"the student"):ids.length+" student"+(ids.length>1?"s":"");
+    const note=prompt("Send a reminder to "+who+" now.\nAdd a short note if you like, or leave it empty:","");
+    if(note===null)return;
+    return busy(b,async()=>{say("Sending… the server can take up to a minute to wake up.");say(await notifyLessons(ids,note.trim()))})}
   if(a==="morningtest"){
     if(!SERVER_URL){say("The server is not set up.",true);return}
     return busy(b,async()=>{say("Sending… the server can take up to a minute to wake up.");
