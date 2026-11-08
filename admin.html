@@ -30,7 +30,7 @@ const dt=v=>v&&v.toDate?v.toDate():null, fd=v=>{const d=dt(v);return d?d.toLocal
 const money=(a,c)=>(c==="KES"?"KES ":"$")+Number(a||0).toLocaleString();
 const empty=(t,p)=>`<div class="empty"><strong>${t}</strong><p>${p}</p></div>`;
 const bt=(a,id,t,line=true,x="")=>`<button class="btn sm ${line?"line":""}" data-act="${a}" data-id="${id}" ${x}>${t}</button>`;
-let uid,users=[],courses=[],enr=[],pays=[],lessons=[],codes=[],quizzes=[],attempts=[],qErr=false,cur="overview",editC="",repCur="USD";
+let uid,users=[],courses=[],enr=[],pays=[],lessons=[],codes=[],quizzes=[],attempts=[],qErr=false,cur="overview",editC="",repCur="USD",plans=[],plErr=false,editP="";
 const students=()=>users.filter(u=>u.role==="student");
 function flash(t,ok=true){$("flash").className="msg "+(ok?"ok":"err");$("flash").textContent=t}
 async function load(){
@@ -39,11 +39,27 @@ async function load(){
   qErr=false;const safe=c=>all(c).catch(()=>{qErr=true;return[]});
   [users,courses,enr,pays,lessons,codes]=await Promise.all(["users","courses","enrollments","payments","lessons","discountCodes"].map(all));
   [quizzes,attempts]=await Promise.all([safe("quizzes"),safe("quizAttempts")]);
+  // Lesson plans load safely too, so the page still works before their rules are published
+  plErr=false;try{plans=(await all("curriculum")).sort((a,b)=>(a.courseNo||0)-(b.courseNo||0)||(a.topicNo||0)-(b.topicNo||0))}catch{plans=[];plErr=true}
   const ms=x=>(x&&x.toMillis)?x.toMillis():0;
   quizzes.sort((a,b)=>ms(b.createdAt)-ms(a.createdAt));
   attempts.sort((a,b)=>ms(b.date)-ms(a.date));
 }
 async function refresh(m){await load();show(cur);if(m)flash(m)}
+
+// ── Lesson plans: reading a topic document ──
+const LV=["All levels","A1 Beginner","A2 Elementary","B1 Intermediate","B2 Upper intermediate"];
+const tc=s=>s.toLowerCase().replace(/(^|[^a-z'’])([a-z])/g,(m,a,b)=>a+b.toUpperCase());          // Title Case
+const sc=s=>{s=s.toLowerCase();return s.charAt(0).toUpperCase()+s.slice(1).replace(/\(([a-z])/g,(m,c)=>"("+c.toUpperCase())};   // Sentence case
+const mapLevel=t=>/beginner/i.test(t)?LV[1]:/elementary/i.test(t)?LV[2]:/upper/i.test(t)?LV[4]:/intermediate/i.test(t)?LV[3]:LV[0];
+// Finds "COURSE 2: …", "TOPIC 1: …", "Level: …" and every "LESSON n: …" heading in the pasted text
+function parseDoc(t){
+  const cm=t.match(/^#{1,4}\s*COURSE\s*(\d+)\s*[:.\-–—]\s*(.+)$/im),tm=t.match(/^#{1,4}\s*TOPIC\s*(\d+)\s*[:.\-–—]\s*(.+)$/im),lv=t.match(/\*{0,2}Level:?\*{0,2}:?\s*(.+)$/im);
+  const lessons=[...t.matchAll(/^#{1,4}\s*LESSON\s*(\d+)\s*[:.\-–—]\s*(.+)$/gim)].map(m=>({no:+m[1],title:sc(m[2].trim())}));
+  return {courseNo:cm?+cm[1]:"",course:cm?tc(cm[2].trim()):"",topicNo:tm?+tm[1]:"",topic:tm?tc(tm[2].trim()):"",level:lv?lv[1].trim():"",lessons};
+}
+// "1. Saying your name" lines back into lessons
+const parseLessons=t=>t.split(/\r?\n/).map(x=>x.trim()).filter(Boolean).map((x,i)=>{const m=x.match(/^(\d+)\s*[.\-:|)]*\s*(.+)$/);return m?{no:+m[1],title:m[2].trim()}:{no:i+1,title:x}});
 
 const PAGES={
 overview:["Overview",()=>{
@@ -77,6 +93,42 @@ courses:["Courses and pricing",()=>{const c=courses.find(x=>x.id===editC)||{};
    if(d.type!=="Trial"&&(!(d.usd>0)||!(d.kes>0)))return flash("Single and Monthly plans need a price in USD and KES.",false);
    if(editC){await updateDoc(doc(db,"courses",editC),d)}else{await addDoc(collection(db,"courses"),{...d,active:true,createdAt:serverTimestamp()})}
    editC="";await refresh("Course saved. Prices update here only; the public page still shows fixed prices.")}}],
+
+plans:["Lesson plans",()=>{const p=plans.find(x=>x.id===editP)||{};
+  const byC={};plans.forEach(x=>(byC[x.course]=byC[x.course]||[]).push(x));
+  return (plErr?`<p class="msg err">Lesson plans could not be loaded. Publish the Firestore rules for curriculum.</p>`:"")+
+  `<p>These are the topics your teachers teach. Add a topic once, and teachers pick its lessons by name when they add a time slot. Prices and plans stay under Courses and pricing.</p>
+  <form class="form" id="plF"><label class="full"><strong>${editP?"Edit topic":"Add a topic"}</strong></label>
+  <label class="full">Paste a topic document (optional)<textarea id="plD" rows="5" placeholder="Paste the document, or choose a .md or .txt file below, then tap Read it"></textarea></label>
+  <div class="acts full"><button class="btn line sm" type="button" id="plRead">Read it</button><input type="file" id="plFile" accept=".md,.txt,text/plain,text/markdown"></div>
+  <label>Course name<input id="plC" required value="${esc(p.course)}" placeholder="e.g. Practical Kiswahili"></label>
+  <label>Course number<input id="plCn" type="number" min="0" value="${p.courseNo??""}"></label>
+  <label>Topic name<input id="plT" required value="${esc(p.topic)}" placeholder="e.g. Introducing yourself"></label>
+  <label>Topic number<input id="plTn" type="number" min="0" value="${p.topicNo??""}"></label>
+  <label>Level<select id="plL">${LV.map(l=>`<option ${l===(p.level||"All levels")?"selected":""}>${l}</option>`).join("")}</select></label>
+  <label class="full">Lessons, one per line<textarea id="plLs" rows="8" placeholder="1. Saying your name">${esc((p.lessons||[]).map(l=>l.no+". "+l.title).join("\n"))}</textarea></label>
+  <div class="acts full"><button class="btn">${editP?"Save changes":"Save topic"}</button>${editP?bt("canp","","Cancel edit"):""}</div></form>`+
+  (plans.length?Object.entries(byC).map(([c,ts])=>`<h3 class="sec">${ts[0].courseNo?"Course "+ts[0].courseNo+": ":""}${esc(c)}</h3>`+ts.map(x=>`<div class="row"><div><strong>Topic ${x.topicNo||"–"}: ${esc(x.topic)}</strong> <span class="pill">${esc(x.level||"All levels")}</span> ${x.active===false?'<span class="pill">Hidden</span>':""}<small>${(x.lessons||[]).length} lessons: ${(x.lessons||[]).map(l=>l.no+". "+esc(l.title)).join(" · ")}</small></div>
+   <div class="acts">${bt("editp",x.id,"Edit")}${bt("togp",x.id,x.active===false?"Show":"Hide")}${bt("delp",x.id,"Delete")}</div></div>`).join("")).join(""):empty("No topics yet","Paste your first topic document above, or type one in."))},
+ ()=>{
+  const fill=()=>{const r=parseDoc($("plD").value);
+    if(!r.lessons.length&&!r.topic)return flash("I could not find any COURSE, TOPIC or LESSON headings in that text.",false);
+    if(r.course)$("plC").value=r.course;if(r.courseNo!=="")$("plCn").value=r.courseNo;
+    if(r.topic)$("plT").value=r.topic;if(r.topicNo!=="")$("plTn").value=r.topicNo;
+    if(r.level)$("plL").value=mapLevel(r.level);
+    if(r.lessons.length)$("plLs").value=r.lessons.map(l=>l.no+". "+l.title).join("\n");
+    flash("Read "+r.lessons.length+" lesson"+(r.lessons.length===1?"":"s")+". Check the names, then Save.")};
+  $("plRead").onclick=fill;
+  $("plFile").onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{$("plD").value=String(rd.result||"");fill()};rd.readAsText(f);e.target.value=""};
+  $("plF").onsubmit=async e=>{e.preventDefault();
+   const lessons=parseLessons($("plLs").value);
+   const d={course:$("plC").value.trim(),courseNo:+$("plCn").value||0,topic:$("plT").value.trim(),topicNo:+$("plTn").value||0,level:$("plL").value,lessons};
+   if(!d.course||!d.topic)return flash("Give the course and the topic a name.",false);
+   if(!lessons.length)return flash("Add at least one lesson.",false);
+   if(new Set(lessons.map(l=>l.no)).size!==lessons.length)return flash("Two lessons have the same number.",false);
+   if(plans.some(x=>x.id!==editP&&x.courseNo===d.courseNo&&x.topicNo===d.topicNo&&x.course.toLowerCase()===d.course.toLowerCase()))return flash("That topic already exists. Edit it instead.",false);
+   if(editP)await updateDoc(doc(db,"curriculum",editP),d);else await addDoc(collection(db,"curriculum"),{...d,active:true,createdAt:serverTimestamp()});
+   editP="";await refresh("Topic saved. Teachers can now pick its lessons when they add a time slot.")}}],
 
 pay:["Subscriptions and payments",()=>{
   const ac=courses.filter(c=>c.active!==false);
@@ -152,12 +204,15 @@ const ACT={
  async togc(b){const c=courses.find(x=>x.id===b.dataset.id);await updateDoc(doc(db,"courses",c.id),{active:c.active===false});await refresh()},
  async delc(b){if(confirm("Delete this course?")){await deleteDoc(doc(db,"courses",b.dataset.id));await refresh("Course deleted.")}},
  async seed(){const w=writeBatch(db);SEED.forEach(([name,type,lessons,minutes,usd,kes])=>w.set(doc(collection(db,"courses")),{name,type,lessons,minutes,usd,kes,active:true,createdAt:serverTimestamp()}));await w.commit();await refresh("Launch plans added.")},
+ async editp(b){editP=b.dataset.id;show("plans");scrollTo(0,0)}, async canp(){editP="";show("plans")},
+ async togp(b){const p=plans.find(x=>x.id===b.dataset.id);await updateDoc(doc(db,"curriculum",p.id),{active:p.active===false});await refresh()},
+ async delp(b){if(!confirm("Delete this topic? Lessons already on the timetable keep their names.")){b.disabled=false;return}await deleteDoc(doc(db,"curriculum",b.dataset.id));await refresh("Topic deleted.")},
  async enst(b){await updateDoc(doc(db,"enrollments",b.dataset.id),{status:b.dataset.s});await refresh()},
  async cancl(b){if(confirm("Cancel this lesson?")){await updateDoc(doc(db,"lessons",b.dataset.id),{status:"cancelled"});await refresh()}},
  async togk(b){const k=codes.find(x=>x.id===b.dataset.id);await updateDoc(doc(db,"discountCodes",k.id),{active:!k.active});await refresh()},
  async delk(b){if(confirm("Delete this code?")){await deleteDoc(doc(db,"discountCodes",b.dataset.id));await refresh()}}
 };
-function show(k){cur=k;const [t,h,b]=PAGES[k];$("title").textContent=t;view.innerHTML=h();if(b)b();
+function show(k){if(k!=="plans")editP="";cur=k;const [t,h,b]=PAGES[k];$("title").textContent=t;view.innerHTML=h();if(b)b();
   $("side").querySelectorAll("button[data-k]").forEach(x=>x.setAttribute("aria-current",x.dataset.k===k))}
 view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;b.disabled=true;
   try{await ACT[b.dataset.act](b)}catch(x){flash("That did not work: "+(x.code||x.message),false);b.disabled=false}};
