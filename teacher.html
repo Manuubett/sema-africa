@@ -63,7 +63,9 @@ const mon=d=>{d=new Date(d);d.setHours(0,0,0,0);d.setDate(d.getDate()-((d.getDay
 const TZ=(Intl.DateTimeFormat().resolvedOptions().timeZone)||"";
 const ST={open:"Open slot",booked:"Booked",attended:"Attended",absent:"Absent",cancelled:"Cancelled"};
 const empty=(t,p)=>`<div class="empty"><strong>${t}</strong><p>${p}</p></div>`;
-let links={},uid,me,students=[],lessons=[],mats=[],prog=[],courses=[],plans=[],schedPre="",week=mon(new Date()),cur="timetable",pick="",showC=false,editL="",qu=[],quizzes=[],attempts=[],qb=null,qres=null,qlErr=false;
+// The course and the topic often hold the same words; show them once
+const what=l=>{const a=(l.courseName||l.type||"").trim(),b=(l.topic||"").trim();if(!b||a===b||a.includes(b))return a;if(b.includes(a))return b;return a+" · "+b};
+let links={},uid,me,students=[],lessons=[],mats=[],prog=[],courses=[],plans=[],schedPre="",week=mon(new Date()),cur="timetable",pick="",showC=false,editL="",qu=[],quizzes=[],attempts=[],qb=null,qres=null,qlErr=false,selDay="";
 const nameOf=id=>(students.find(s=>s.id===id)||{}).name||"";
 const opts=(sel)=>students.map(s=>`<option value="${s.id}" ${s.id===sel?"selected":""}>${esc(s.name)}</option>`).join("");
 
@@ -100,7 +102,7 @@ async function load(){
   students=(await getDocs(query(collection(db,"users"),where("role","==","student")))).docs.map(d=>({id:d.id,...d.data()}));
 }
 const lessonRow=(l,acts="")=>`<div class="row"><div><strong>${fd(T(l))}, ${ft(T(l))}</strong> <span class="pill">${ST[l.status]||l.status}</span>
-  <small>${esc(l.studentName||"No student yet")} · ${esc(l.courseName||l.type)}${l.topic?" · "+esc(l.topic):""} · ${l.duration} min</small></div><div class="acts">${joinBtn(l)}${acts}</div></div>`;
+  <small>${esc(l.studentName||"No student yet")} · ${esc(what(l))} · ${l.duration} min</small></div><div class="acts">${joinBtn(l)}${acts}</div></div>`;
 const btn=(a,id,t,line=true)=>`<button class="btn sm ${line?"line":""}" type="button" data-act="${a}" data-id="${id}">${t}</button>`;
 const linkBtn=l=>btn("link",l.id,linkOf(l)?"Change link":"Add link");
 
@@ -169,19 +171,37 @@ students:["Student list",()=>{
 
 timetable:["Weekly timetable",()=>{
   const days=[...Array(7)].map((_,i)=>{const d=new Date(week);d.setDate(d.getDate()+i);return d});
-  const today=new Date(),todayS=today.toDateString();
+  const today=new Date(),todayS=today.toDateString(),midnight=new Date(todayS);
   const vis=lessons.filter(l=>showC||l.status!=="cancelled");
-  return `<form class="form" id="slotF"><label>Date<input type="date" id="sd" required min="${iso(today)}" value="${iso(today)}"></label><label>Time<input type="time" id="st" required></label>
+  const on=d=>vis.filter(l=>T(l).toDateString()===d.toDateString());
+  const chosen=days.find(d=>iso(d)===selDay)||days.find(d=>d.toDateString()===todayS)||days[0];
+  const list=on(chosen);
+  const acts=l=>(l.status!=="cancelled"?joinBtn(l):"")
+    +(isLive(l)?btn("edit",l.id,"Edit"):"")
+    +(l.status==="booked"&&isLive(l)?btn("remind",l.id,"Remind")+btn("cancelled",l.id,"Cancel"):"")
+    +(l.status==="booked"&&!isLive(l)?btn("attended",l.id,"Attended",false)+btn("absent",l.id,"Absent"):"")
+    +(["open","cancelled"].includes(l.status)?btn("dellesson",l.id,"Delete"):"");
+  const card=l=>{const s=T(l),e=new Date(+s+l.duration*60000);
+    return `<article class="tl-card ${esc(l.status)}"><div class="tl-time"><strong>${ft(s)}</strong><span>${ft(e)}</span></div>
+    <div class="tl-main"><div class="tl-head"><h3>${esc(l.studentName||"Open slot")}</h3><span class="pill">${ST[l.status]||esc(l.status)}</span></div>
+    <p>${esc(what(l))} · ${l.duration} min</p>${["attended","absent"].includes(l.status)?"<small>Kept as a record</small>":""}</div>
+    <div class="tl-acts">${acts(l)}</div></article>`};
+  return `<p class="msg" id="m"></p>
+  <details class="tl-add" ${schedPre?"open":""}><summary>＋ Add a time slot</summary>
+  <form class="form" id="slotF"><label>Date<input type="date" id="sd" required min="${iso(today)}" value="${iso(chosen<midnight?today:chosen)}"></label><label>Time<input type="time" id="st" required></label>
   <label>Lesson (course)<select id="sco" required><option value="">Choose the lesson…</option>${courses.map(c=>`<option value="${c.id}">${esc(c.name)} · ${c.minutes} min</option>`).join("")}</select></label>
   ${plans.length?`<label>Lesson plan (optional)<select id="spl"><option value="">Not from a lesson plan</option>${planOpts()}</select></label>`:""}
   <label>Topic shown to students (optional)<input id="stp" maxlength="140" placeholder="e.g. Greetings and introductions"></label>
   <label>Student (leave empty so students can book it)<select id="ss"><option value="">Open slot</option>${opts()}</select></label>
   <label>Meeting link<input id="sm" type="url" required placeholder="https://meet.google.com/…" value="${esc(lastLink())}"></label>
-  ${courses.length?"":`<p class="msg err full">No lessons to choose from yet. Ask the admin to add courses first.</p>`}<button class="btn">Add to timetable</button><p class="msg full" id="m"></p></form>
-  <div class="nav2">${btn("prev","","Previous week")}<strong>${fd(days[0])} – ${fd(days[6])}</strong>${btn("next","","Next week")}${btn("today","","This week")}
+  ${courses.length?"":`<p class="msg err full">No lessons to choose from yet. Ask the admin to add courses first.</p>`}<button class="btn">Add to timetable</button></form></details>
+  <div class="tl-bar">${btn("prev","","‹ Previous")}<strong>${fd(days[0])} – ${fd(days[6])}</strong>${btn("next","","Next ›")}${btn("today","","This week")}
   <label class="chk"><input type="checkbox" id="sc" ${showC?"checked":""}> Show cancelled</label></div>
-  <p><small>Times are shown in your device's time zone${TZ?" ("+esc(TZ)+")":""}.</small></p>
-  <div class="week">${days.map(d=>`<div class="day ${d.toDateString()===todayS?"today":""}"><h3>${fd(d)}${d.toDateString()===todayS?" · Today":""}</h3>${vis.filter(l=>T(l).toDateString()===d.toDateString()).map(l=>`<div class="slot ${esc(l.status)}"><strong>${ft(T(l))}</strong> ${l.duration}m<span class="st">${ST[l.status]||esc(l.status)}</span>${esc(l.studentName||"Open")}<small>${esc(l.courseName||l.type)}${l.topic?" · "+esc(l.topic):""}</small><div class="acts">${l.status!=="cancelled"?joinBtn(l):""}${isLive(l)?btn("edit",l.id,"Edit"):""}${l.status==="booked"&&isLive(l)?btn("remind",l.id,"Remind")+btn("cancelled",l.id,"Cancel"):""}${l.status==="booked"&&!isLive(l)?btn("attended",l.id,"Attended",false)+btn("absent",l.id,"Absent"):""}${["open","cancelled"].includes(l.status)?btn("dellesson",l.id,"Delete"):""}${["attended","absent"].includes(l.status)?"<small>Kept as a record</small>":""}</div></div>`).join("")}</div>`).join("")}</div>`},
+  <div class="tl-days" role="group" aria-label="Days of the week">${days.map(d=>{const n=on(d).length,isSel=d===chosen;
+    return `<button type="button" class="tl-day ${isSel?"sel":""} ${d.toDateString()===todayS?"today":""}" data-act="day" data-id="${iso(d)}" aria-pressed="${isSel}"><span>${d.toLocaleDateString([],{weekday:"short"})}</span><strong>${d.getDate()}</strong><i>${n?n+(n===1?" class":" classes"):"–"}</i></button>`}).join("")}</div>
+  <h2 class="tl-h">${chosen.toDateString()===todayS?"Today, ":""}${chosen.toLocaleDateString([],{weekday:"long",day:"numeric",month:"long"})}</h2>
+  ${list.length?`<div class="tl-list">${list.map(card).join("")}</div>`:empty("No lessons on this day","Open Add a time slot above to put a lesson here.")}
+  <p class="note"><small>Times are shown in your device's time zone${TZ?" ("+esc(TZ)+")":""}.</small></p>`},
  ()=>{
   $("sc").onchange=e=>{showC=e.target.checked;show("timetable")};
   if($("spl"))$("spl").onchange=e=>{const t=planText(e.target.value);if(t)$("stp").value=t};
@@ -334,7 +354,8 @@ async function setLinks(ids,current,question){
 
 view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const a=b.dataset.act,id=b.dataset.id;
   if(a==="prev"||a==="next"){week.setDate(week.getDate()+(a==="next"?7:-7));return show("timetable")}
-  if(a==="today"){week=mon(new Date());return show("timetable")}
+  if(a==="today"){week=mon(new Date());selDay="";return show("timetable")}
+  if(a==="day"){selDay=id;return show("timetable")}
   if(a==="prog"){pick=id;return show("progress")}
   if(a==="sched"){schedPre=id;return show("timetable")}
   if(a==="remind"||a==="remindall"){
