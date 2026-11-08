@@ -52,7 +52,7 @@ const mon=d=>{d=new Date(d);d.setHours(0,0,0,0);d.setDate(d.getDate()-((d.getDay
 const TZ=(Intl.DateTimeFormat().resolvedOptions().timeZone)||"";
 const ST={open:"Open slot",booked:"Booked",attended:"Attended",absent:"Absent",cancelled:"Cancelled"};
 const empty=(t,p)=>`<div class="empty"><strong>${t}</strong><p>${p}</p></div>`;
-let links={},uid,me,students=[],lessons=[],mats=[],prog=[],courses=[],week=mon(new Date()),cur="timetable",pick="",showC=false,editL="",qu=[],quizzes=[],attempts=[],qb=null,qres=null,qlErr=false;
+let links={},uid,me,students=[],lessons=[],mats=[],prog=[],courses=[],plans=[],week=mon(new Date()),cur="timetable",pick="",showC=false,editL="",qu=[],quizzes=[],attempts=[],qb=null,qres=null,qlErr=false;
 const nameOf=id=>(students.find(s=>s.id===id)||{}).name||"";
 const opts=(sel)=>students.map(s=>`<option value="${s.id}" ${s.id===sel?"selected":""}>${esc(s.name)}</option>`).join("");
 
@@ -79,6 +79,7 @@ async function load(){
   qlErr=false;const safe=c=>own(c).catch(()=>{qlErr=true;return[]});
   let lk=[];[lessons,mats,prog,lk,quizzes,attempts]=await Promise.all([own("lessons"),own("materials"),own("progress"),own("lessonLinks"),safe("quizzes"),safe("quizAttempts")]);links={};lk.forEach(x=>links[x.id]=x.meetLink);
   try{courses=(await getDocs(collection(db,"courses"))).docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.active!==false).sort((a,b)=>a.usd-b.usd)}catch{courses=[]}
+  try{plans=(await getDocs(collection(db,"curriculum"))).docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.active!==false).sort((a,b)=>(a.courseNo||0)-(b.courseNo||0)||(a.topicNo||0)-(b.topicNo||0))}catch{plans=[]}
   const ms=x=>(x&&x.toMillis)?x.toMillis():0;
   quizzes.sort((a,b)=>ms(b.createdAt)-ms(a.createdAt));
   attempts.sort((a,b)=>ms(b.date)-ms(a.date));
@@ -92,13 +93,19 @@ const lessonRow=(l,acts="")=>`<div class="row"><div><strong>${fd(T(l))}, ${ft(T(
 const btn=(a,id,t,line=true)=>`<button class="btn sm ${line?"line":""}" type="button" data-act="${a}" data-id="${id}">${t}</button>`;
 const linkBtn=l=>btn("link",l.id,linkOf(l)?"Change link":"Add link");
 
+// Lesson plans: the admin's topics, so a lesson is picked by name instead of typed
+const planOpts=()=>plans.map(p=>`<optgroup label="${esc((p.courseNo?"Course "+p.courseNo+": ":"")+p.course+" · Topic "+(p.topicNo||"–")+": "+p.topic)}">${(p.lessons||[]).map(l=>`<option value="${p.id}|${l.no}">Lesson ${l.no}: ${esc(l.title)}</option>`).join("")}</optgroup>`).join("");
+const planText=v=>{const [id,n]=String(v||"").split("|"),p=plans.find(x=>x.id===id),l=p&&(p.lessons||[]).find(x=>String(x.no)===n);return l?p.topic+" · Lesson "+l.no+": "+l.title:""};
+const planRef=v=>{const [id,n]=String(v||"").split("|");return id&&n?{planId:id,planNo:+n}:{}};
+
 // The edit form for one lesson (shown at the top of Upcoming lessons)
 const editForm=l=>{const d=T(l);
   return `<form class="form" id="editF" style="margin-bottom:18px"><label class="full"><strong>Edit lesson: ${fd(d)}, ${ft(d)}</strong></label>
   ${l.status==="booked"?`<small class="full">Booked by ${esc(l.studentName||"a student")}. If you change the time, they will see the new time on their Classes page, but they are not messaged automatically, so tell them. Reminders will be sent for the new time.</small>`:""}
   <label>Date<input type="date" id="ed" required value="${iso(d)}"></label><label>Time<input type="time" id="et" required value="${isoT(d)}"></label>
   <label>Lesson (course)<select id="ec"><option value="">Keep: ${esc(l.courseName||l.type)} · ${l.duration} min</option>${courses.map(c=>`<option value="${c.id}">${esc(c.name)} · ${c.minutes} min</option>`).join("")}</select></label>
-  <label>Topic (optional)<input id="etp" maxlength="80" value="${esc(l.topic||"")}" placeholder="e.g. Greetings and introductions"></label>
+  ${plans.length?`<label>Lesson plan (optional)<select id="epl"><option value="">Keep the topic as it is</option>${planOpts()}</select></label>`:""}
+  <label>Topic shown to students (optional)<input id="etp" maxlength="140" value="${esc(l.topic||"")}" placeholder="e.g. Greetings and introductions"></label>
   <label class="full">Meeting link<input id="el" type="url" value="${esc(linkOf(l))}" placeholder="https://meet.google.com/…"></label>
   <div class="acts full"><button class="btn">Save changes</button>${btn("editx","","Cancel")}</div></form>`};
 
@@ -155,7 +162,8 @@ timetable:["Weekly timetable",()=>{
   const vis=lessons.filter(l=>showC||l.status!=="cancelled");
   return `<form class="form" id="slotF"><label>Date<input type="date" id="sd" required min="${iso(today)}" value="${iso(today)}"></label><label>Time<input type="time" id="st" required></label>
   <label>Lesson (course)<select id="sco" required><option value="">Choose the lesson…</option>${courses.map(c=>`<option value="${c.id}">${esc(c.name)} · ${c.minutes} min</option>`).join("")}</select></label>
-  <label>Topic (optional)<input id="stp" maxlength="80" placeholder="e.g. Greetings and introductions"></label>
+  ${plans.length?`<label>Lesson plan (optional)<select id="spl"><option value="">Not from a lesson plan</option>${planOpts()}</select></label>`:""}
+  <label>Topic shown to students (optional)<input id="stp" maxlength="140" placeholder="e.g. Greetings and introductions"></label>
   <label>Student (leave empty so students can book it)<select id="ss"><option value="">Open slot</option>${opts()}</select></label>
   <label>Meeting link<input id="sm" type="url" required placeholder="https://meet.google.com/…" value="${esc(lastLink())}"></label>
   ${courses.length?"":`<p class="msg err full">No lessons to choose from yet. Ask the admin to add courses first.</p>`}<button class="btn">Add to timetable</button><p class="msg full" id="m"></p></form>
@@ -165,6 +173,7 @@ timetable:["Weekly timetable",()=>{
   <div class="week">${days.map(d=>`<div class="day ${d.toDateString()===todayS?"today":""}"><h3>${fd(d)}${d.toDateString()===todayS?" · Today":""}</h3>${vis.filter(l=>T(l).toDateString()===d.toDateString()).map(l=>`<div class="slot ${esc(l.status)}"><strong>${ft(T(l))}</strong> ${l.duration}m<span class="st">${ST[l.status]||esc(l.status)}</span>${esc(l.studentName||"Open")}<small>${esc(l.courseName||l.type)}${l.topic?" · "+esc(l.topic):""}</small><div class="acts">${l.status!=="cancelled"?joinBtn(l):""}${isLive(l)?btn("edit",l.id,"Edit"):""}${["open","cancelled"].includes(l.status)?btn("dellesson",l.id,"Delete"):""}</div></div>`).join("")}</div>`).join("")}</div>`},
  ()=>{
   $("sc").onchange=e=>{showC=e.target.checked;show("timetable")};
+  if($("spl"))$("spl").onchange=e=>{const t=planText(e.target.value);if(t)$("stp").value=t};
   $("slotF").onsubmit=e=>{e.preventDefault();busy(sub(e.target),async()=>{
    const s=$("ss").value,ml=$("sm").value.trim();
    if(!ml)throw new Error("Add a meeting link for this lesson.");
@@ -176,7 +185,7 @@ timetable:["Weekly timetable",()=>{
    const clash=findClash(start,dur,"");
    if(clash)throw new Error("This overlaps your lesson on "+fd(T(clash))+" at "+ft(T(clash))+".");
    const lr=doc(collection(db,"lessons"));
-   await setDoc(lr,{teacherId:uid,teacherName:me.name,studentId:s,studentName:nameOf(s),start:Timestamp.fromDate(start),duration:dur,type:c.type,courseId:c.id,courseName:c.name,topic:$("stp").value.trim(),status:s?"booked":"open"});
+   await setDoc(lr,{teacherId:uid,teacherName:me.name,studentId:s,studentName:nameOf(s),start:Timestamp.fromDate(start),duration:dur,type:c.type,courseId:c.id,courseName:c.name,topic:$("stp").value.trim(),...planRef($("spl")&&$("spl").value),status:s?"booked":"open"});
    await setDoc(doc(db,"lessonLinks",lr.id),{teacherId:uid,meetLink:ml});
    saveLast(ml);
    await refresh("Added to your timetable.")})}}],
@@ -189,6 +198,7 @@ upcoming:["Upcoming lessons",()=>{const now=Date.now();
   (missing?`<div class="row"><div><strong>${missing} upcoming lesson${missing>1?"s":""} without a meeting link</strong><small>Add one link to all of them at once, or use Add link on each lesson.</small></div><div class="acts">${btn("bulk","","Add link to all",false)}</div></div>`:"")+
   (l.length?l.map(x=>lessonRow(x,linkBtn(x)+btn("edit",x.id,"Edit")+(x.status==="open"?btn("dellesson",x.id,"Delete"):btn("cancelled",x.id,"Cancel lesson")))).join(""):empty("No upcoming lessons","Add slots in Weekly timetable."))},
  ()=>{const f=$("editF");if(!f)return;
+  if($("epl"))$("epl").onchange=e=>{const t=planText(e.target.value);if(t)$("etp").value=t};
   f.onsubmit=e=>{e.preventDefault();busy(sub(f),async()=>{
    const l=lessons.find(x=>x.id===editL);if(!l)return;
    const ml=$("el").value.trim();
@@ -199,7 +209,7 @@ upcoming:["Upcoming lessons",()=>{const now=Date.now();
    const c=courses.find(x=>x.id===$("ec").value),dur=c?+c.minutes:+l.duration;
    const clash=findClash(start,dur,l.id);
    if(clash)throw new Error("This overlaps your lesson on "+fd(T(clash))+" at "+ft(T(clash))+".");
-   const data={start:Timestamp.fromDate(start),duration:dur,topic:$("etp").value.trim()};
+   const data={start:Timestamp.fromDate(start),duration:dur,topic:$("etp").value.trim(),...planRef($("epl")&&$("epl").value)};
    if(c){data.courseId=c.id;data.courseName=c.name;data.type=c.type}
    // A new time needs fresh reminders, so clear the "already sent" marks
    if(+start!==+T(l))data.reminders=deleteField();
