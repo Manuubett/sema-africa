@@ -22,15 +22,30 @@ details.qz{margin-bottom:10px}details.qz>summary{cursor:pointer}details.qz detai
 </script>
 <script type="module">
 import {auth,db,HOME} from "./js/firebase.js";
+import * as FB from "./js/firebase.js";
 import {onAuthStateChanged,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {doc,getDoc,collection,getDocs,addDoc,setDoc,updateDoc,deleteDoc,writeBatch,Timestamp,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+const SERVER_URL=(FB.SERVER_URL||"").trim().replace(/\/+$/,"");
+// Booked lessons are cancelled on the server so the student gets their lesson back. Render's free plan can take a minute to wake up.
+async function staffCancel(id){
+  const c=new AbortController(),t=setTimeout(()=>c.abort(),75000);
+  try{
+    const r=await fetch(SERVER_URL+"/api/lessons/staff-cancel",{method:"POST",signal:c.signal,headers:{"Content-Type":"application/json",Authorization:"Bearer "+await auth.currentUser.getIdToken()},body:JSON.stringify({lessonId:id})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||"Could not cancel");
+    return d;
+  }catch(e){
+    if(e.name==="AbortError")throw new Error("The server took too long to answer. Wait a minute, then check the list before trying again.");
+    throw e;
+  }finally{clearTimeout(t)}
+}
 const $=id=>document.getElementById(id), view=$("view");
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const dt=v=>v&&v.toDate?v.toDate():null, fd=v=>{const d=dt(v);return d?d.toLocaleDateString([],{day:"numeric",month:"short",year:"numeric"}):"–"};
 const money=(a,c)=>(c==="KES"?"KES ":"$")+Number(a||0).toLocaleString();
 const empty=(t,p)=>`<div class="empty"><strong>${t}</strong><p>${p}</p></div>`;
 const bt=(a,id,t,line=true,x="")=>`<button class="btn sm ${line?"line":""}" data-act="${a}" data-id="${id}" ${x}>${t}</button>`;
-let uid,users=[],courses=[],enr=[],pays=[],lessons=[],codes=[],quizzes=[],attempts=[],qErr=false,cur="overview",editC="",repCur="USD",plans=[],plErr=false,editP="";
+let uid,users=[],courses=[],enr=[],pays=[],lessons=[],codes=[],quizzes=[],attempts=[],qErr=false,cur="overview",editC="",repCur="USD",plans=[],plErr=false,editP="",selB=new Set();
 const students=()=>users.filter(u=>u.role==="student");
 function flash(t,ok=true){$("flash").className="msg "+(ok?"ok":"err");$("flash").textContent=t}
 async function load(){
@@ -156,12 +171,24 @@ pay:["Subscriptions and payments",()=>{
    b.set(doc(collection(db,"payments")),{userId:s.id,userName:s.name,courseId:c.id,courseName:c.name,amount:+$("pa").value,currency:$("pu").value,method:$("pm").value,reference:$("pr").value.trim(),createdAt:serverTimestamp()});
    await b.commit();await refresh(s.name+" is enrolled and the payment is recorded.")}}],
 
-bookings:["Bookings",()=>`<div class="form"><label>Show<select id="bf"><option value="">All</option><option value="open">Open slots</option><option value="booked">Booked</option><option value="attended">Attended</option><option value="absent">Absent</option><option value="cancelled">Cancelled</option></select></label></div><div id="bl"></div>`,
- ()=>{const draw=()=>{const f=$("bf").value,l=lessons.filter(x=>!f||x.status===f).sort((a,b)=>dt(b.start)-dt(a.start)).slice(0,100);
-   $("bl").innerHTML=l.length?l.map(x=>`<div class="row"><div><strong>${dt(x.start).toLocaleString([],{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</strong> <span class="pill">${esc(x.status)}</span>
-    <small>Teacher ${esc(x.teacherName||"–")} · Student ${esc(x.studentName||"none yet")} · ${esc(x.type)} · ${x.duration} min</small></div>
-    <div class="acts">${["open","booked"].includes(x.status)?bt("cancl",x.id,"Cancel lesson"):""}</div></div>`).join(""):empty("No bookings","Lessons teachers add appear here.")};
-  $("bf").onchange=draw;draw()}],
+bookings:["Bookings",()=>`<div class="form"><label>Show<select id="bf"><option value="">All</option><option value="open">Open slots</option><option value="booked">Booked</option><option value="attended">Attended</option><option value="absent">Absent</option><option value="cancelled">Cancelled</option></select></label></div>
+  <div class="acts" id="bbar" style="margin:12px 0"><label class="chk"><input type="checkbox" id="ball"> Select all shown</label><small id="bcnt">None selected</small>${bt("bcancel","","Cancel selected")}${bt("bdel","","Delete selected",false)}</div>
+  <div id="bl"></div>`,
+ ()=>{
+  const match=()=>{const f=$("bf").value;return lessons.filter(x=>!f||x.status===f).sort((a,b)=>dt(b.start)-dt(a.start))};
+  const rows=()=>match().slice(0,100);
+  const upd=()=>{const n=selB.size,shown=rows();$("bcnt").textContent=n?n+" selected":"None selected";
+    $("ball").checked=!!shown.length&&shown.every(x=>selB.has(x.id));
+    $("bbar").querySelectorAll("[data-act]").forEach(b=>b.disabled=!n)};
+  const draw=()=>{const l=rows();
+   $("bl").innerHTML=l.length?l.map(x=>`<div class="row"><div><label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer"><input type="checkbox" data-sel="${x.id}" ${selB.has(x.id)?"checked":""} style="width:auto;flex:none;margin-top:5px" aria-label="Select this lesson"><span><strong>${dt(x.start).toLocaleString([],{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</strong> <span class="pill">${esc(x.status)}</span>
+    <small>Teacher ${esc(x.teacherName||"–")} · Student ${esc(x.studentName||"none yet")} · ${esc(x.courseName||x.type)}${x.topic?" · "+esc(x.topic):""} · ${x.duration} min</small></span></label></div>
+    <div class="acts">${["open","booked"].includes(x.status)?bt("cancl",x.id,"Cancel lesson"):""}</div></div>`).join("")+(match().length>100?'<p><small>Showing the latest 100. Use the filter above to narrow the list.</small></p>':""):empty("No bookings","Lessons teachers add appear here.");
+   upd()};
+  $("bf").onchange=()=>{selB.clear();draw()};
+  $("ball").onchange=e=>{rows().forEach(x=>e.target.checked?selB.add(x.id):selB.delete(x.id));draw()};
+  $("bl").onchange=e=>{const id=e.target.dataset.sel;if(!id)return;e.target.checked?selB.add(id):selB.delete(id);upd()};
+  draw()}],
 
 quizzes:["Quiz results",()=>{
   const tot=attempts.length,avg=tot?Math.round(attempts.reduce((a,x)=>a+(x.total?x.score/x.total:0),0)/tot*100):0;
@@ -204,6 +231,32 @@ marketing:["Marketing and discount codes",()=>`<form class="form" id="kF"><label
    await refresh("Code "+code+" created. It will be checked on the server when payments go live.")}}]
 };
 const SEED=[["Trial lesson","Trial",1,25,5,650],["Single lesson","Single",1,45,12,1500],["4 lessons a month","Monthly",4,45,40,5000],["8 lessons a month","Monthly",8,45,75,9500]];
+// Runs one admin action over several lessons. A booked lesson goes through the server first, so its student gets the lesson back.
+async function bulkRun(ls,mode){
+  let refunded=0,failed=0,deleted=0,cancelled=0,first="";
+  const direct=[];
+  for(const [i,l] of ls.entries()){
+    try{
+      if(l.status==="booked"){
+        flash("Working… "+(i+1)+" of "+ls.length+". The server can take up to a minute to wake up. Please don't click again.");
+        await staffCancel(l.id);refunded++;
+        if(mode==="delete")direct.push(l.id);else cancelled++;
+      }else if(mode==="cancel"){
+        if(l.status==="open"){await updateDoc(doc(db,"lessons",l.id),{status:"cancelled",cancelledBy:"admin"});cancelled++}
+      }else direct.push(l.id);
+    }catch(x){failed++;first=first||(x&&x.message)||String(x)}
+  }
+  if(direct.length){
+    try{
+      for(let i=0;i<direct.length;i+=400){const wb=writeBatch(db);direct.slice(i,i+400).forEach(id=>wb.delete(doc(db,"lessons",id)));await wb.commit()}
+      deleted=direct.length;
+      // meeting links belong to the lessons; remove them too (this needs the lessonLinks admin rule, so a failure is not fatal)
+      for(const id of direct){try{await deleteDoc(doc(db,"lessonLinks",id))}catch{}}
+    }catch(x){failed+=direct.length;first=first||(x&&x.message)||String(x)}
+  }
+  const n=mode==="delete"?deleted:cancelled;
+  return n+" lesson"+(n===1?"":"s")+(mode==="delete"?" deleted":" cancelled")+(refunded?". "+refunded+" returned to students":"")+(failed?". "+failed+" could not be done"+(first?": "+first.replace(/\.+$/,""):""):"")+".";
+}
 const ACT={
  async role(b){const r=b.dataset.r;if(!confirm("Change this person to "+r+"?"))return;await updateDoc(doc(db,"users",b.dataset.id),{role:r});await refresh("Role changed to "+r+".")},
  async editc(b){editC=b.dataset.id;show("courses")}, async canc(){editC="";show("courses")},
@@ -213,12 +266,32 @@ const ACT={
  async editp(b){editP=b.dataset.id;show("plans");scrollTo(0,0)}, async canp(){editP="";show("plans")},
  async togp(b){const p=plans.find(x=>x.id===b.dataset.id);await updateDoc(doc(db,"curriculum",p.id),{active:p.active===false});await refresh()},
  async delp(b){if(!confirm("Delete this topic? Lessons already on the timetable keep their names.")){b.disabled=false;return}await deleteDoc(doc(db,"curriculum",b.dataset.id));await refresh("Topic deleted.")},
+ async cancl(b){const l=lessons.find(x=>x.id===b.dataset.id);if(!l){b.disabled=false;return}
+   if(l.status==="booked"){
+     // a booked lesson is cancelled on the server so the student gets the lesson back
+     if(!SERVER_URL){flash("Cancelling a booked lesson needs the server, which is not set up.",false);b.disabled=false;return}
+     if(!confirm("Cancel this lesson? The student gets their lesson back.")){b.disabled=false;return}
+     flash("Cancelling… the server can take up to a minute to wake up.");
+     await staffCancel(l.id);await refresh("Lesson cancelled. The student got their lesson back.");return}
+   if(!confirm("Cancel this open slot?")){b.disabled=false;return}
+   await updateDoc(doc(db,"lessons",l.id),{status:"cancelled"});await refresh()},
+ async bcancel(b){const ls=[...selB].map(id=>lessons.find(x=>x.id===id)).filter(l=>l&&["open","booked"].includes(l.status));
+   if(!ls.length){flash("Only open or booked lessons can be cancelled. Nothing to do.",false);b.disabled=false;return}
+   const bk=ls.filter(l=>l.status==="booked").length;
+   if(bk&&!SERVER_URL){flash("Cancelling booked lessons needs the server, which is not set up.",false);b.disabled=false;return}
+   if(!confirm("Cancel "+ls.length+" lesson"+(ls.length>1?"s":"")+"?"+(bk?" "+bk+" "+(bk>1?"are":"is")+" booked: those students get their lesson back.":"")+" Lessons that are not open or booked are skipped.")){b.disabled=false;return}
+   const msg=await bulkRun(ls,"cancel");selB.clear();await refresh(msg)},
+ async bdel(b){const ls=[...selB].map(id=>lessons.find(x=>x.id===id)).filter(Boolean);
+   if(!ls.length){b.disabled=false;return}
+   const bk=ls.filter(l=>l.status==="booked").length,fin=ls.filter(l=>["attended","absent"].includes(l.status)).length;
+   if(bk&&!SERVER_URL){flash("Deleting booked lessons needs the server, so students get their lesson back. Untick the booked ones, or set the server up.",false);b.disabled=false;return}
+   if(!confirm("Delete "+ls.length+" lesson"+(ls.length>1?"s":"")+" permanently?"+(bk?"\n• "+bk+" booked: those students get their lesson back first.":"")+(fin?"\n• "+fin+" attended or absent: their attendance record is removed.":"")+"\nThis cannot be undone.")){b.disabled=false;return}
+   const msg=await bulkRun(ls,"delete");selB.clear();await refresh(msg)},
  async enst(b){await updateDoc(doc(db,"enrollments",b.dataset.id),{status:b.dataset.s});await refresh()},
- async cancl(b){if(confirm("Cancel this lesson?")){await updateDoc(doc(db,"lessons",b.dataset.id),{status:"cancelled"});await refresh()}},
  async togk(b){const k=codes.find(x=>x.id===b.dataset.id);await updateDoc(doc(db,"discountCodes",k.id),{active:!k.active});await refresh()},
  async delk(b){if(confirm("Delete this code?")){await deleteDoc(doc(db,"discountCodes",b.dataset.id));await refresh()}}
 };
-function show(k){if(k!=="plans")editP="";cur=k;const [t,h,b]=PAGES[k];$("title").textContent=t;view.innerHTML=h();if(b)b();
+function show(k){if(k!=="plans")editP="";if(k!=="bookings")selB.clear();cur=k;const [t,h,b]=PAGES[k];$("title").textContent=t;view.innerHTML=h();if(b)b();
   $("side").querySelectorAll("button[data-k]").forEach(x=>x.setAttribute("aria-current",x.dataset.k===k))}
 view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;b.disabled=true;
   try{await ACT[b.dataset.act](b)}catch(x){flash("That did not work: "+(x.code||x.message),false);b.disabled=false}};
