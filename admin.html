@@ -39,13 +39,24 @@ async function staffCancel(id){
     throw e;
   }finally{clearTimeout(t)}
 }
+// A teacher or admin sends a reminder by hand. The server checks who may remind which lesson.
+async function notifyLessons(ids,note){
+  const c=new AbortController(),t=setTimeout(()=>c.abort(),75000);
+  try{
+    const r=await fetch(SERVER_URL+"/api/reminders/notify",{method:"POST",signal:c.signal,headers:{"Content-Type":"application/json",Authorization:"Bearer "+await auth.currentUser.getIdToken()},body:JSON.stringify({lessonIds:ids,note})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||"Could not send");
+    const sk=d.skipped||[];
+    return d.sent+" reminder"+(d.sent===1?"":"s")+" sent"+(sk.length?". Skipped "+sk.length+": "+[...new Set(sk.map(x=>x.reason))].join("; "):"")+".";
+  }catch(e){if(e.name==="AbortError")throw new Error("The server took too long to answer. Wait a minute, then try again.");throw e}finally{clearTimeout(t)}
+}
 const $=id=>document.getElementById(id), view=$("view");
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const dt=v=>v&&v.toDate?v.toDate():null, fd=v=>{const d=dt(v);return d?d.toLocaleDateString([],{day:"numeric",month:"short",year:"numeric"}):"–"};
 const money=(a,c)=>(c==="KES"?"KES ":"$")+Number(a||0).toLocaleString();
 const empty=(t,p)=>`<div class="empty"><strong>${t}</strong><p>${p}</p></div>`;
 const bt=(a,id,t,line=true,x="")=>`<button class="btn sm ${line?"line":""}" data-act="${a}" data-id="${id}" ${x}>${t}</button>`;
-let uid,users=[],courses=[],enr=[],pays=[],lessons=[],codes=[],quizzes=[],attempts=[],qErr=false,cur="overview",editC="",repCur="USD",plans=[],plErr=false,editP="",selB=new Set();
+let uid,users=[],courses=[],enr=[],pays=[],lessons=[],codes=[],quizzes=[],attempts=[],qErr=false,cur="overview",editC="",repCur="USD",plans=[],plErr=false,editP="",selB=new Set(),remOff=[1440,60],remErr=false;
 const students=()=>users.filter(u=>u.role==="student");
 function flash(t,ok=true){$("flash").className="msg "+(ok?"ok":"err");$("flash").textContent=t}
 async function load(){
@@ -56,6 +67,7 @@ async function load(){
   [quizzes,attempts]=await Promise.all([safe("quizzes"),safe("quizAttempts")]);
   // Lesson plans load safely too, so the page still works before their rules are published
   plErr=false;try{plans=(await all("curriculum")).sort((a,b)=>(a.courseNo||0)-(b.courseNo||0)||(a.topicNo||0)-(b.topicNo||0))}catch{plans=[];plErr=true}
+  remErr=false;try{const s=await getDoc(doc(db,"settings","reminders"));remOff=s.exists()&&Array.isArray(s.data().offsets)?s.data().offsets:[1440,60]}catch{remOff=[1440,60];remErr=true}
   const ms=x=>(x&&x.toMillis)?x.toMillis():0;
   quizzes.sort((a,b)=>ms(b.createdAt)-ms(a.createdAt));
   attempts.sort((a,b)=>ms(b.date)-ms(a.date));
@@ -172,7 +184,7 @@ pay:["Subscriptions and payments",()=>{
    await b.commit();await refresh(s.name+" is enrolled and the payment is recorded.")}}],
 
 bookings:["Bookings",()=>`<div class="form"><label>Show<select id="bf"><option value="">All</option><option value="open">Open slots</option><option value="booked">Booked</option><option value="attended">Attended</option><option value="absent">Absent</option><option value="cancelled">Cancelled</option></select></label></div>
-  <div class="acts" id="bbar" style="margin:12px 0"><label class="chk"><input type="checkbox" id="ball"> Select all shown</label><small id="bcnt">None selected</small>${bt("bcancel","","Cancel selected")}${bt("bdel","","Delete selected",false)}</div>
+  <div class="acts" id="bbar" style="margin:12px 0"><label class="chk"><input type="checkbox" id="ball"> Select all shown</label><small id="bcnt">None selected</small>${bt("bremind","","Remind selected")}${bt("bcancel","","Cancel selected")}${bt("bdel","","Delete selected",false)}</div>
   <div id="bl"></div>`,
  ()=>{
   const match=()=>{const f=$("bf").value;return lessons.filter(x=>!f||x.status===f).sort((a,b)=>dt(b.start)-dt(a.start))};
@@ -183,12 +195,30 @@ bookings:["Bookings",()=>`<div class="form"><label>Show<select id="bf"><option v
   const draw=()=>{const l=rows();
    $("bl").innerHTML=l.length?l.map(x=>`<div class="row"><div><label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer"><input type="checkbox" data-sel="${x.id}" ${selB.has(x.id)?"checked":""} style="width:auto;flex:none;margin-top:5px" aria-label="Select this lesson"><span><strong>${dt(x.start).toLocaleString([],{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"})}</strong> <span class="pill">${esc(x.status)}</span>
     <small>Teacher ${esc(x.teacherName||"–")} · Student ${esc(x.studentName||"none yet")} · ${esc(x.courseName||x.type)}${x.topic?" · "+esc(x.topic):""} · ${x.duration} min</small></span></label></div>
-    <div class="acts">${["open","booked"].includes(x.status)?bt("cancl",x.id,"Cancel lesson"):""}</div></div>`).join("")+(match().length>100?'<p><small>Showing the latest 100. Use the filter above to narrow the list.</small></p>':""):empty("No bookings","Lessons teachers add appear here.");
+    <div class="acts">${x.status==="booked"?bt("remind",x.id,"Remind"):""}${["open","booked"].includes(x.status)?bt("cancl",x.id,"Cancel lesson"):""}</div></div>`).join("")+(match().length>100?'<p><small>Showing the latest 100. Use the filter above to narrow the list.</small></p>':""):empty("No bookings","Lessons teachers add appear here.");
    upd()};
   $("bf").onchange=()=>{selB.clear();draw()};
   $("ball").onchange=e=>{rows().forEach(x=>e.target.checked?selB.add(x.id):selB.delete(x.id));draw()};
   $("bl").onchange=e=>{const id=e.target.dataset.sel;if(!id)return;e.target.checked?selB.add(id):selB.delete(id);upd()};
   draw()}],
+
+remsettings:["Reminder settings",()=>{
+  const PRE=[[1440,"24 hours before class"],[180,"3 hours before class"],[60,"1 hour before class"],[30,"30 minutes before class"],[15,"15 minutes before class"],[0,"When the class starts"]];
+  const custom=remOff.filter(o=>!PRE.some(p=>p[0]===o));
+  return (remErr?`<p class="msg err">Reminder settings could not be loaded. Publish the Firestore rule for settings.</p>`:"")+
+  `<p>Students are reminded by email and WhatsApp (whichever they switched on) at each time you tick. You can tick up to four. Teachers and admins can also send a reminder by hand with the <strong>Remind</strong> buttons.</p>
+  <form class="form" id="rmF">${PRE.map(([m,t])=>`<label class="chk"><input type="checkbox" data-m="${m}" ${remOff.includes(m)?"checked":""}> ${t}</label>`).join("")}
+  <label>Another time, in minutes before class (optional)<input id="rmC" type="number" min="1" max="10080" value="${custom[0]||""}" placeholder="e.g. 45"></label>
+  <button class="btn">Save reminder times</button></form>
+  <div class="row"><div><strong>How exact are the times?</strong><small>Reminders go out when the timer on cron-job.org calls the server. With a timer every 10 minutes, a reminder can be up to 10 minutes late. For "15 minutes before" or "when the class starts", set that timer to every 1 minute.</small></div></div>`},
+ ()=>{$("rmF").onsubmit=async e=>{e.preventDefault();
+   const o=[...document.querySelectorAll("#rmF [data-m]")].filter(x=>x.checked).map(x=>+x.dataset.m);
+   const c=Math.round(+$("rmC").value);if(c>0)o.push(c);
+   const offs=[...new Set(o)].sort((a,b)=>b-a);
+   if(offs.length>4)return flash("Choose at most four reminder times.",false);
+   if(!offs.length&&!confirm("No reminder time is ticked, so students will get no automatic reminders. Save anyway?"))return;
+   await setDoc(doc(db,"settings","reminders"),{offsets:offs,updatedAt:serverTimestamp()});
+   await refresh("Reminder times saved.")}}],
 
 quizzes:["Quiz results",()=>{
   const tot=attempts.length,avg=tot?Math.round(attempts.reduce((a,x)=>a+(x.total?x.score/x.total:0),0)/tot*100):0;
@@ -287,6 +317,17 @@ const ACT={
    if(bk&&!SERVER_URL){flash("Deleting booked lessons needs the server, so students get their lesson back. Untick the booked ones, or set the server up.",false);b.disabled=false;return}
    if(!confirm("Delete "+ls.length+" lesson"+(ls.length>1?"s":"")+" permanently?"+(bk?"\n• "+bk+" booked: those students get their lesson back first.":"")+(fin?"\n• "+fin+" attended or absent: their attendance record is removed.":"")+"\nThis cannot be undone.")){b.disabled=false;return}
    const msg=await bulkRun(ls,"delete");selB.clear();await refresh(msg)},
+ async remind(b){const l=lessons.find(x=>x.id===b.dataset.id);if(!l){b.disabled=false;return}
+   if(!SERVER_URL){flash("The server is not set up.",false);b.disabled=false;return}
+   const note=prompt("Send a reminder to "+(l.studentName||"the student")+" now.\nAdd a short note if you like, or leave it empty:","");
+   if(note===null){b.disabled=false;return}
+   flash("Sending… the server can take up to a minute to wake up.");flash(await notifyLessons([l.id],note.trim()));b.disabled=false},
+ async bremind(b){const ids=[...selB].filter(id=>{const l=lessons.find(x=>x.id===id);return l&&l.status==="booked"});
+   if(!ids.length){flash("Select at least one booked lesson to remind.",false);b.disabled=false;return}
+   if(!SERVER_URL){flash("The server is not set up.",false);b.disabled=false;return}
+   const note=prompt("Send a reminder to the students of "+ids.length+" booked lesson"+(ids.length>1?"s":"")+" now.\nAdd a short note if you like, or leave it empty:","");
+   if(note===null){b.disabled=false;return}
+   flash("Sending… the server can take up to a minute to wake up.");const msg=await notifyLessons(ids,note.trim());selB.clear();await refresh(msg)},
  async enst(b){await updateDoc(doc(db,"enrollments",b.dataset.id),{status:b.dataset.s});await refresh()},
  async togk(b){const k=codes.find(x=>x.id===b.dataset.id);await updateDoc(doc(db,"discountCodes",k.id),{active:!k.active});await refresh()},
  async delk(b){if(confirm("Delete this code?")){await deleteDoc(doc(db,"discountCodes",b.dataset.id));await refresh()}}
