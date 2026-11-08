@@ -52,7 +52,7 @@ const mon=d=>{d=new Date(d);d.setHours(0,0,0,0);d.setDate(d.getDate()-((d.getDay
 const TZ=(Intl.DateTimeFormat().resolvedOptions().timeZone)||"";
 const ST={open:"Open slot",booked:"Booked",attended:"Attended",absent:"Absent",cancelled:"Cancelled"};
 const empty=(t,p)=>`<div class="empty"><strong>${t}</strong><p>${p}</p></div>`;
-let links={},uid,me,students=[],lessons=[],mats=[],prog=[],courses=[],plans=[],week=mon(new Date()),cur="timetable",pick="",showC=false,editL="",qu=[],quizzes=[],attempts=[],qb=null,qres=null,qlErr=false;
+let links={},uid,me,students=[],lessons=[],mats=[],prog=[],courses=[],plans=[],schedPre="",week=mon(new Date()),cur="timetable",pick="",showC=false,editL="",qu=[],quizzes=[],attempts=[],qb=null,qres=null,qlErr=false;
 const nameOf=id=>(students.find(s=>s.id===id)||{}).name||"";
 const opts=(sel)=>students.map(s=>`<option value="${s.id}" ${s.id===sel?"selected":""}>${esc(s.name)}</option>`).join("");
 
@@ -174,6 +174,9 @@ timetable:["Weekly timetable",()=>{
  ()=>{
   $("sc").onchange=e=>{showC=e.target.checked;show("timetable")};
   if($("spl"))$("spl").onchange=e=>{const t=planText(e.target.value);if(t)$("stp").value=t};
+  // arriving from the Lesson library: the lesson is already chosen, only the date and time are left
+  if(schedPre){const v=schedPre;schedPre="";if($("spl")&&[...$("spl").options].some(o=>o.value===v)){$("spl").value=v;$("stp").value=planText(v);
+    say("Scheduling: "+planText(v)+". Choose the date, time and lesson type, then tap Add to timetable.");scrollTo(0,0)}}
   $("slotF").onsubmit=e=>{e.preventDefault();busy(sub(e.target),async()=>{
    const s=$("ss").value,ml=$("sm").value.trim();
    if(!ml)throw new Error("Add a meeting link for this lesson.");
@@ -189,6 +192,18 @@ timetable:["Weekly timetable",()=>{
    await setDoc(doc(db,"lessonLinks",lr.id),{teacherId:uid,meetLink:ml});
    saveLast(ml);
    await refresh("Added to your timetable.")})}}],
+
+library:["Lesson library",()=>{
+  if(!plans.length)return empty("No lesson plans yet","The admin adds topics and their lessons under Lesson plans. They will appear here, ready to schedule.");
+  // how many times this teacher has scheduled and taught each lesson
+  const stat=(p,n)=>{const ls=lessons.filter(l=>l.planId===p.id&&l.planNo===n),a=[],up=ls.filter(isLive).length,done=ls.filter(l=>l.status==="attended").length;
+    if(up)a.push(up+" scheduled");if(done)a.push(done+" taught");return a.join(" · ")||"Not scheduled yet"};
+  const byC={};plans.forEach(p=>(byC[p.course]=byC[p.course]||[]).push(p));
+  return `<label>Search<input id="lq" placeholder="Type a lesson, topic or course"></label><p class="msg" id="m"></p>`+
+   Object.entries(byC).map(([c,ts])=>`<h3 style="margin:22px 0 4px;font-size:1.2rem">${ts[0].courseNo?"Course "+ts[0].courseNo+": ":""}${esc(c)}</h3>`+
+    ts.map(p=>`<p style="margin:12px 0 6px"><strong>Topic ${p.topicNo||"–"}: ${esc(p.topic)}</strong> <span class="pill">${esc(p.level||"All levels")}</span></p>`+
+     (p.lessons||[]).map(l=>`<div class="row" data-s="${esc((c+" "+p.topic+" "+l.title).toLowerCase())}"><div><strong>Lesson ${l.no}: ${esc(l.title)}</strong><small>${esc(stat(p,l.no))}</small></div><div class="acts">${btn("sched",p.id+"|"+l.no,"Schedule",false)}</div></div>`).join("")).join("")).join("")},
+ ()=>{const q=$("lq");if(q)q.oninput=()=>document.querySelectorAll("[data-s]").forEach(r=>r.hidden=!r.dataset.s.includes(q.value.trim().toLowerCase()))}],
 
 upcoming:["Upcoming lessons",()=>{const now=Date.now();
   const l=lessons.filter(x=>T(x)>=now&&["open","booked"].includes(x.status));
@@ -308,6 +323,7 @@ view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const
   if(a==="prev"||a==="next"){week.setDate(week.getDate()+(a==="next"?7:-7));return show("timetable")}
   if(a==="today"){week=mon(new Date());return show("timetable")}
   if(a==="prog"){pick=id;return show("progress")}
+  if(a==="sched"){schedPre=id;return show("timetable")}
   if(a==="morningtest"){
     if(!SERVER_URL){say("The server is not set up.",true);return}
     return busy(b,async()=>{say("Sending… the server can take up to a minute to wake up.");
