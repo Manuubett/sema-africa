@@ -170,7 +170,7 @@ timetable:["Weekly timetable",()=>{
   <div class="nav2">${btn("prev","","Previous week")}<strong>${fd(days[0])} – ${fd(days[6])}</strong>${btn("next","","Next week")}${btn("today","","This week")}
   <label class="chk"><input type="checkbox" id="sc" ${showC?"checked":""}> Show cancelled</label></div>
   <p><small>Times are shown in your device's time zone${TZ?" ("+esc(TZ)+")":""}.</small></p>
-  <div class="week">${days.map(d=>`<div class="day ${d.toDateString()===todayS?"today":""}"><h3>${fd(d)}${d.toDateString()===todayS?" · Today":""}</h3>${vis.filter(l=>T(l).toDateString()===d.toDateString()).map(l=>`<div class="slot ${esc(l.status)}"><strong>${ft(T(l))}</strong> ${l.duration}m<span class="st">${ST[l.status]||esc(l.status)}</span>${esc(l.studentName||"Open")}<small>${esc(l.courseName||l.type)}${l.topic?" · "+esc(l.topic):""}</small><div class="acts">${l.status!=="cancelled"?joinBtn(l):""}${isLive(l)?btn("edit",l.id,"Edit"):""}${["open","cancelled"].includes(l.status)?btn("dellesson",l.id,"Delete"):""}</div></div>`).join("")}</div>`).join("")}</div>`},
+  <div class="week">${days.map(d=>`<div class="day ${d.toDateString()===todayS?"today":""}"><h3>${fd(d)}${d.toDateString()===todayS?" · Today":""}</h3>${vis.filter(l=>T(l).toDateString()===d.toDateString()).map(l=>`<div class="slot ${esc(l.status)}"><strong>${ft(T(l))}</strong> ${l.duration}m<span class="st">${ST[l.status]||esc(l.status)}</span>${esc(l.studentName||"Open")}<small>${esc(l.courseName||l.type)}${l.topic?" · "+esc(l.topic):""}</small><div class="acts">${l.status!=="cancelled"?joinBtn(l):""}${isLive(l)?btn("edit",l.id,"Edit"):""}${l.status==="booked"&&isLive(l)?btn("cancelled",l.id,"Cancel"):""}${l.status==="booked"&&!isLive(l)?btn("attended",l.id,"Attended",false)+btn("absent",l.id,"Absent"):""}${["open","cancelled"].includes(l.status)?btn("dellesson",l.id,"Delete"):""}${["attended","absent"].includes(l.status)?"<small>Kept as a record</small>":""}</div></div>`).join("")}</div>`).join("")}</div>`},
  ()=>{
   $("sc").onchange=e=>{showC=e.target.checked;show("timetable")};
   if($("spl"))$("spl").onchange=e=>{const t=planText(e.target.value);if(t)$("stp").value=t};
@@ -386,7 +386,8 @@ view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const
     if(l.status==="booked"){say("A booked lesson can't be deleted. Cancel it first so the student gets their lesson back.",true);return}
     if(!confirm("Delete the time slot on "+fd(T(l))+" at "+ft(T(l))+"? This cannot be undone."))return;
     return busy(b,async()=>{
-      await deleteDoc(doc(db,"lessons",id));
+      try{await deleteDoc(doc(db,"lessons",id))}
+      catch(x){if(x&&x.code==="permission-denied")throw new Error("Firestore did not allow deleting this lesson. Only open or cancelled slots that you created can be deleted. A booked lesson must be cancelled first.");throw x}
       if(links[id]||l.meetLink){try{await deleteDoc(doc(db,"lessonLinks",id))}catch{}}
       await refresh("Time slot deleted.");
     })}
