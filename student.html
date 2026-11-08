@@ -347,7 +347,7 @@ reminders:["Class reminders",()=>`<p>We remind you before each class so you neve
   <label><span style="display:contents"><input type="checkbox" id="rmW" ${me.remindWhatsapp?"checked":""}> Send me a WhatsApp message</span></label>
   <label>WhatsApp number<input id="rmP" type="tel" inputmode="tel" placeholder="07XX XXX XXX or +country code" value="${esc(me.phone||"")}"></label>
   <button class="btn" data-act="saveRem">Save reminders</button></div>
-  <p style="margin-top:14px"><small>Reminders arrive about 24 hours and 1 hour before class, in your own time zone. We only message you about your classes.</small></p>`],
+  <p style="margin-top:14px"><small>${esc(remNote)} We only message you about your classes.</small></p>`],
 payments:["Payment history",()=>pays.length?pays.map(p=>`<div class="row"><div><strong>${money(p.amount,p.currency)}</strong> · ${esc(p.courseName)}<small>${esc(p.method)} ${esc(p.reference||"")} · ${fd(p.createdAt)}</small></div></div>`).join(""):empty("No payments yet","Receipts for your plans will be listed here.")]
 };
 
@@ -454,6 +454,12 @@ $("payDlg").onclick=async e=>{const b=e.target.closest("[data-p]");if(!b)return;
 /* ── cancel and reschedule (the server returns the lesson safely) ── */
 let cancelHrs=12;
 if(SERVER_URL)fetch(SERVER_URL+"/api/health").then(r=>r.json()).then(h=>{if(h.cancelHours)cancelHrs=h.cancelHours}).catch(()=>{});
+// The reminder times are set by the admin, so the page asks the server instead of promising fixed ones
+let remNote="Reminders arrive about 24 hours and 1 hour before class, in your own time zone.";
+const offLabel=m=>m>=60&&m%60===0?(m/60)+" hour"+(m===60?"":"s"):m+" minute"+(m===1?"":"s");
+if(SERVER_URL)fetch(SERVER_URL+"/api/reminders/schedule").then(r=>r.json()).then(h=>{if(!Array.isArray(h.offsets))return;
+  const o=h.offsets,b=o.filter(x=>x>0).map(offLabel),s=o.includes(0);
+  remNote=!o.length?"There are no automatic reminders at the moment.":"Reminders arrive "+[b.length?"about "+(b.length>1?b.slice(0,-1).join(", ")+" and "+b[b.length-1]:b[0])+" before class":"",s?(b.length?"and ":"")+"when the class starts":""].filter(Boolean).join(" ")+", in your own time zone."}).catch(()=>{});
 async function lapi(path,body){const r=await fetch(SERVER_URL+"/api/lessons"+path,{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+await auth.currentUser.getIdToken()},body:JSON.stringify(body)});
   const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||"Something went wrong");return d}
 const isEarly=l=>dt(l.start).getTime()-Date.now()>=cancelHrs*3600000;
