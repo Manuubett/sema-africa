@@ -61,6 +61,10 @@ function parseDoc(t){
 // "1. Saying your name" lines back into lessons
 const parseLessons=t=>t.split(/\r?\n/).map(x=>x.trim()).filter(Boolean).map((x,i)=>{const m=x.match(/^(\d+)\s*[.\-:|)]*\s*(.+)$/);return m?{no:+m[1],title:m[2].trim()}:{no:i+1,title:x}});
 
+// Names for Courses and pricing come from the lesson plans, so they are picked, not typed
+const nameOpts=()=>{const cs=[...new Set(plans.map(p=>p.course))];
+  return `<optgroup label="Courses">${cs.map(c=>`<option>${esc(c)}</option>`).join("")}</optgroup>`+
+   plans.map(p=>`<optgroup label="${esc(p.course+" · Topic "+(p.topicNo||"–")+": "+p.topic)}"><option>${esc(p.topic)}</option>${(p.lessons||[]).map(l=>`<option value="${esc(p.topic+" · Lesson "+l.no+": "+l.title)}">Lesson ${l.no}: ${esc(l.title)}</option>`).join("")}</optgroup>`).join("")};
 const PAGES={
 overview:["Overview",()=>{
   const now=new Date(),mk=d=>d.getFullYear()+"-"+d.getMonth();
@@ -78,7 +82,8 @@ users:["Students and teachers",()=>`<div class="form"><label>Search<input id="q"
   $("q").oninput=draw;$("rf").onchange=draw;draw()}],
 
 courses:["Courses and pricing",()=>{const c=courses.find(x=>x.id===editC)||{};
-  return `<form class="form" id="cF"><label>Name<input id="cn" required value="${esc(c.name)}"></label>
+  return `<form class="form" id="cF">${plans.length?`<label>Pick a name from your lesson plans<select id="cnp"><option value="">Choose a name…</option>${nameOpts()}</select></label>`:""}
+  <label>Name shown to students<input id="cn" required value="${esc(c.name)}" placeholder="Pick one above, or type your own"></label>
   <label>Type<select id="ct">${["Trial","Single","Monthly"].map(t=>`<option ${c.type===t?"selected":""}>${t}</option>`).join("")}</select></label>
   <label>Lessons included<input id="cl" type="number" min="1" value="${c.lessons||1}"></label>
   <label>Minutes each<select id="cm"><option ${c.minutes==25?"selected":""}>25</option><option ${c.minutes==25?"":"selected"}>45</option></select></label>
@@ -87,7 +92,8 @@ courses:["Courses and pricing",()=>{const c=courses.find(x=>x.id===editC)||{};
   <button class="btn">${editC?"Save changes":"Add course"}</button>${editC?bt("canc","","Cancel edit"):""}</form>`+
   (courses.length?courses.map(c=>`<div class="row"><div><strong>${esc(c.name)}</strong> <span class="pill">${esc(c.type)}</span> ${c.active===false?'<span class="pill">Hidden</span>':""}<small>${c.lessons} × ${c.minutes} min · ${Number(c.kes)>0?"$"+c.usd+" / KES "+Number(c.kes).toLocaleString():"Free"}</small></div>
    <div class="acts">${bt("editc",c.id,"Edit")}${bt("togc",c.id,c.active===false?"Show":"Hide")}${bt("delc",c.id,"Delete")}</div></div>`).join(""):empty("No courses yet","Add your first course, or load the four launch plans.")+bt("seed","","Add the four launch plans",false))},
- ()=>{$("cF").onsubmit=async e=>{e.preventDefault();
+ ()=>{if($("cnp"))$("cnp").onchange=e=>{if(e.target.value)$("cn").value=e.target.value};
+  $("cF").onsubmit=async e=>{e.preventDefault();
    const d={name:$("cn").value.trim(),type:$("ct").value,lessons:+$("cl").value,minutes:+$("cm").value,usd:+$("cu").value||0,kes:+$("ck").value||0};
    // Only a Trial can be free. Single and Monthly plans must have a price in both currencies.
    if(d.type!=="Trial"&&(!(d.usd>0)||!(d.kes>0)))return flash("Single and Monthly plans need a price in USD and KES.",false);
