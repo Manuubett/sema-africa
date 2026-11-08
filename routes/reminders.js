@@ -12,58 +12,103 @@ module.exports = (admin) => {
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let running = false;
 
-  // Mark a reminder as sent BEFORE sending, so it can never go out twice.
-  // The claim stores the student's id, so if the slot is freed and booked by someone else,
-  // the new student still gets their own reminders.
-  const claim = (lref, key) => db.runTransaction(async tx => {
+  // ── Reminder times: the admin chooses them under Reminder settings (settings/reminders) ──
+  const DEFAULT_OFFSETS = [1440, 60];                         // minutes before class: 24 hours and 1 hour
+  const cleanOffsets = a => [...new Set((a || []).map(Number).filter(n => Number.isFinite(n) && n >= 0 && n <= 10080).map(Math.round))].sort((x, y) => y - x).slice(0, 4);
+  async function loadOffsets() {
+    try { const s = await db.collection('settings').doc('reminders').get(); if (s.exists && Array.isArray(s.data().offsets)) return cleanOffsets(s.data().offsets); }
+    catch (e) { console.error('[reminders:settings]', e.message); }
+    return DEFAULT_OFFSETS;
+  }
+  const ALIAS = { 1440: 'r24', 60: 'r1' };                    // marks written by the older version, so nobody is reminded twice
+  const GRACE = 15 * 60e3;                                    // a "class starts" reminder can still go out for 15 minutes
+
+  // Mark the reminder as sent BEFORE sending, so it can never go out twice.
+  // due = the offsets that are due right now, smallest first. The smallest one is sent;
+  // the bigger ones are marked as handled too, so a late booking is not reminded several times.
+  // The marks store the student's id, so a freed slot booked by someone else still sends that student's reminders.
+  const claim = (lref, due) => db.runTransaction(async tx => {
     const s = await tx.get(lref), d = s.exists ? s.data() : null;
-    if (!d || d.status !== 'booked' || (d.reminders && d.reminders[key] === d.studentId)) return false;
-    tx.update(lref, { ['reminders.' + key]: d.studentId });
+    if (!d || d.status !== 'booked') return false;
+    const sent = k => d.reminders && d.reminders[k] === d.studentId;
+    const target = due[0];
+    if (sent('o' + target) || (ALIAS[target] && sent(ALIAS[target]))) return false;
+    const upd = {}; due.forEach(o => { upd['reminders.o' + o] = d.studentId; });
+    tx.update(lref, upd);
     return true;
   });
+
+  const soonText = diff => {
+    const m = Math.round(diff / 60e3), h = Math.round(m / 60);
+    return diff <= 0 ? 'is starting now' : m <= 1 ? 'starts in about a minute' : m < 60 ? `starts in about ${m} minutes`
+      : diff < 24 * 36e5 ? `starts in about ${h} hour${h === 1 ? '' : 's'}` : 'is coming up';
+  };
+
+  // Sends one student's reminder for one lesson (used by the timer and by the Remind buttons).
+  // Returns { sent, errors, reason } where reason explains why nothing was sent.
+  async function deliver(l, diff, note) {
+    const u = (await db.collection('users').doc(l.studentId).get()).data() || {};
+    const when = N.formatWhen(l.start.toDate(), u.tz);
+    const first = String(u.name || 'there').split(' ')[0];
+    const ls = await db.collection('lessonLinks').doc(l.id).get();
+    const link = (ls.exists && ls.data().meetLink) || l.meetLink || SITE + '/student.html';
+    const soon = soonText(diff), canMove = diff >= HOURS * 3600e3;
+    const emailOk = u.remindEmail !== false && u.email && N.emailReady();
+    const waOk = u.remindWhatsapp && u.phone && N.waReady();
+    const res = { sent: false, errors: 0, reason: '' };
+    if (!emailOk && !waOk) {
+      res.reason = (!u.email && !u.phone) ? 'the student has no email or WhatsApp number'
+        : (u.remindEmail === false && !u.remindWhatsapp) ? 'the student turned reminders off'
+        : 'email or WhatsApp is not set up on the server';
+      return res;
+    }
+    if (emailOk) {
+      const lesson = [l.courseName, l.topic].filter(Boolean).join(' · ');
+      const text = `Hujambo ${first}!\n\nYour SemaAfrica class ${soon}: ${when}.` + (lesson ? `\nLesson: ${lesson}` : '') + `\nJoin here: ${link}` +
+        (note ? `\n\nNote from your teacher: ${note}` : '') +
+        (canMove ? `\n\nNeed to move it? Open your dashboard at least ${HOURS} hours before class: ${SITE}/student.html` : '') + `\n\nKaribu sana!`;
+      const html = `<p>Hujambo ${esc(first)}!</p><p>Your SemaAfrica class ${soon}:<br><strong>${esc(when)}</strong></p>` +
+        (lesson ? `<p style="color:#555">Lesson: ${esc(lesson)}</p>` : '') +
+        `<p><a href="${esc(link)}" style="background:#C42B5B;color:#fff;padding:10px 18px;border-radius:20px;text-decoration:none">Join class</a></p>` +
+        (note ? `<p style="border-left:3px solid #C42B5B;padding-left:10px">Note from your teacher: ${esc(note)}</p>` : '') +
+        (canMove ? `<p style="color:#555">Need to move it? <a href="${esc(SITE)}/student.html">Open your dashboard</a> at least ${HOURS} hours before class.</p>` : '') +
+        `<p>Karibu sana!</p>`;
+      const subject = diff <= 24 * 36e5 ? 'Your Swahili class ' + soon : 'Reminder: your Swahili class on ' + when;
+      try { await N.sendEmail(u.email, subject, text, html); res.sent = true; }
+      catch (e) { res.errors++; console.error('[reminder:email]', e.message); }
+    }
+    if (waOk) {
+      const to = N.waNumber(u.phone);   // the approved WhatsApp template has fixed fields (name, time, link), so a note goes by email only
+      if (to) try { await N.sendWhatsApp(to, [first, when, link]); res.sent = true; }
+      catch (e) { res.errors++; console.error('[reminder:whatsapp]', e.message); }
+    }
+    if (!res.sent && !res.reason) res.reason = 'sending failed, see the server log';
+    return res;
+  }
 
   async function run() {
     if (running) return { skipped: true };
     running = true;
     const out = { checked: 0, sent: 0, errors: 0 };
     try {
-      const now = Date.now();
+      const offsets = await loadOffsets();
+      if (!offsets.length) return out;                         // the admin switched automatic reminders off
+      const now = Date.now(), maxO = Math.max(...offsets);
       const snap = await db.collection('lessons')
-        .where('start', '>=', Timestamp.fromMillis(now))
-        .where('start', '<=', Timestamp.fromMillis(now + 24 * 3600e3)).get();
+        .where('start', '>=', Timestamp.fromMillis(now - GRACE))
+        .where('start', '<=', Timestamp.fromMillis(now + maxO * 60e3)).get();
       for (const doc of snap.docs) {
-        const l = doc.data();
+        const l = { id: doc.id, ...doc.data() };
         if (l.status !== 'booked' || !l.studentId) continue;
         out.checked++;
-        const key = l.start.toMillis() - now <= 3600e3 ? 'r1' : 'r24';
-        if (!(await claim(doc.ref, key))) continue;
-
-        const u = (await db.collection('users').doc(l.studentId).get()).data() || {};
-        const when = N.formatWhen(l.start.toDate(), u.tz);
-        const first = String(u.name || 'there').split(' ')[0];
-        const ls = await db.collection('lessonLinks').doc(doc.id).get();
-        const link = (ls.exists && ls.data().meetLink) || l.meetLink || SITE + '/student.html';
-        const soon = key === 'r1' ? 'starts in about an hour' : 'is coming up';
-        const late = key === 'r1';   // too close to move the class, so don't mention moving it
-        let sent = false;
-
-        if (u.remindEmail !== false && u.email && N.emailReady()) {
-          const text = `Hujambo ${first}!\n\nYour SemaAfrica class ${soon}: ${when}.\nJoin here: ${link}` +
-            (late ? '' : `\n\nNeed to move it? Open your dashboard at least ${HOURS} hours before class: ${SITE}/student.html`) +
-            `\n\nKaribu sana!`;
-          const html = `<p>Hujambo ${esc(first)}!</p><p>Your SemaAfrica class ${soon}:<br><strong>${esc(when)}</strong></p>` +
-            `<p><a href="${esc(link)}" style="background:#C42B5B;color:#fff;padding:10px 18px;border-radius:20px;text-decoration:none">Join class</a></p>` +
-            (late ? '' : `<p style="color:#555">Need to move it? <a href="${esc(SITE)}/student.html">Open your dashboard</a> at least ${HOURS} hours before class.</p>`) +
-            `<p>Karibu sana!</p>`;
-          try { await N.sendEmail(u.email, late ? 'Your Swahili class starts in about an hour' : 'Reminder: your Swahili class on ' + when, text, html); sent = true; }
-          catch (e) { out.errors++; console.error('[reminder:email]', e.message); }
-        }
-        if (u.remindWhatsapp && u.phone && N.waReady()) {
-          const to = N.waNumber(u.phone);
-          if (to) try { await N.sendWhatsApp(to, [first, when, link]); sent = true; }
-          catch (e) { out.errors++; console.error('[reminder:whatsapp]', e.message); }
-        }
-        if (sent) out.sent++;
+        const diff = l.start.toMillis() - now;
+        // an offset is due once the lesson is that close; after the start only "when the class starts" (0) can still go out
+        const due = offsets.filter(o => diff <= o * 60e3 && (diff > 0 || o === 0)).sort((x, y) => x - y);
+        if (!due.length) continue;
+        if (!(await claim(doc.ref, due))) continue;
+        const r2 = await deliver(l, diff, '');
+        out.errors += r2.errors;
+        if (r2.sent) out.sent++;
       }
     } finally { running = false; }
     return out;
@@ -206,6 +251,39 @@ module.exports = (admin) => {
       await N.sendEmail(t.email, '[Preview] ' + dg.subject, dg.text, dg.html);
       res.json({ ok: true, to: t.email });
     } catch (e) { console.error('[morning-test]', e.message); res.status(500).json({ error: 'Could not send the preview' }); }
+  });
+
+  // The times students are reminded (shown on the student's reminder page)
+  r.get('/schedule', async (req, res) => { res.json({ offsets: await loadOffsets() }); });
+
+  // A teacher (their own lessons) or an admin (any lesson) sends a reminder by hand to the booked students.
+  // POST { lessonIds: [...], note: "optional short message" }
+  r.post('/notify', requireUser, async (req, res) => {
+    try {
+      const u = (await db.collection('users').doc(req.uid).get()).data() || {};
+      if (u.role !== 'teacher' && u.role !== 'admin') return res.status(403).json({ error: 'Teachers and admins only' });
+      const ids = [...new Set((Array.isArray(req.body.lessonIds) ? req.body.lessonIds : []).map(String))].slice(0, 60);
+      if (!ids.length) return res.status(400).json({ error: 'Choose at least one lesson' });
+      const note = String(req.body.note || '').trim().slice(0, 300);
+      const out = { sent: 0, skipped: [], errors: 0 };
+      for (const id of ids) {
+        const ref = db.collection('lessons').doc(id), snap = await ref.get();
+        const skip = reason => out.skipped.push({ id, reason });
+        if (!snap.exists) { skip('lesson not found'); continue; }
+        const l = { id, ...snap.data() };
+        if (u.role === 'teacher' && l.teacherId !== req.uid) { skip('not your lesson'); continue; }
+        if (l.status !== 'booked' || !l.studentId) { skip('not booked by a student'); continue; }
+        const diff = l.start.toMillis() - Date.now();
+        if (diff < -GRACE) { skip('the class has already started'); continue; }
+        const last = l.lastNotifiedAt && l.lastNotifiedAt.toMillis ? l.lastNotifiedAt.toMillis() : 0;
+        if (Date.now() - last < 10 * 60e3) { skip('reminded less than 10 minutes ago'); continue; }
+        const d = await deliver(l, diff, note);
+        out.errors += d.errors;
+        if (d.sent) { out.sent++; await ref.update({ lastNotifiedAt: FieldValue.serverTimestamp(), lastNotifiedBy: req.uid }); }
+        else skip(d.reason);
+      }
+      res.json(out);
+    } catch (e) { console.error('[notify]', e.message); res.status(500).json({ error: 'Could not send the reminders' }); }
   });
 
   // A free timer service (such as cron-job.org) calls this every 10 minutes. It also keeps the server awake.
