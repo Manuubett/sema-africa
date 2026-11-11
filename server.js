@@ -32,6 +32,7 @@ if (process.env.PAYMENTS_MODE === 'live') require('./providers/daraja').assertCo
 
 const app = express();
 app.disable('x-powered-by');
+app.set('trust proxy', 1);   // Render sits behind a proxy, so req.ip is the real visitor
 const allowed = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
   .map(s => { try { return new URL(s).origin; } catch { return s.replace(/\/+$/, ''); } });   // tolerates a trailing slash or a path
 console.log('Allowed origins:', allowed.join(', ') || '(NONE SET: add ALLOWED_ORIGINS in Render)');
@@ -43,15 +44,31 @@ app.use(cors({ origin: (o, cb) => {                                        // on
 
 app.use(express.json({ limit: '100kb' }));
 
-app.use('/api/payments', require('./routes/payments')(admin));
+// Small built-in rate limiter (no extra package): max `max` requests per minute per visitor and area.
+// Safaricom's payment callback is exempt so a real payment confirmation is never blocked.
+function limit(max) {
+  const hits = new Map();
+  setInterval(() => hits.clear(), 60 * 1000).unref();
+  return (req, res, next) => {
+    if (req.path === '/callback') return next();
+    const k = req.ip;
+    const n = (hits.get(k) || 0) + 1;
+    hits.set(k, n);
+    if (n > max) return res.status(429).json({ error: 'Too many requests. Please wait a minute and try again.' });
+    next();
+  };
+}
+
+app.use('/api/payments', limit(60), require('./routes/payments')(admin));
 app.use('/api/lessons', require('./routes/lessons')(admin));
+app.use('/api/admin', limit(30), require('./routes/admin')(admin));   // admin-only actions, such as deleting a person
 const reminders = require('./routes/reminders')(admin);
 app.use('/api/reminders', reminders);
 // Also check every 10 minutes while the server is awake (the timer service covers the times it is asleep)
 setInterval(() => reminders.run().catch(e => console.error('[reminders]', e.message)), 10 * 60 * 1000);
 
 // Health check only. Deliberately no endpoints that reveal env settings, database or file names.
-app.get('/api/health', (req, res) => res.json({ ok: true, service: 'semaafrica', mode: process.env.PAYMENTS_MODE || 'test', project: PROJECT_ID, cancelHours: Number(process.env.CANCEL_HOURS || 12) }));
+app.get('/api/health', (req, res) => res.json({ ok: true, service: 'semaafrica', mode: process.env.PAYMENTS_MODE || 'test', cancelHours: Number(process.env.CANCEL_HOURS || 12) }));
 app.get('/', (req, res) => res.send('SemaAfrica server OK'));
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err, req, res, next) => { console.error('[error]', err.message); res.status(500).json({ error: 'Server error' }); });
