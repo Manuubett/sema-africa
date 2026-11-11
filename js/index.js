@@ -1,100 +1,77 @@
-// SemaAfrica file Worker: private uploads and downloads backed by R2.
-// Security idea: the Worker never trusts the browser. It forwards the user's Firebase
-// login token to Firestore, so Firestore (and your security rules) decide who is who.
-const MAX = 25 * 1024 * 1024;
-const err = (m, s) => Object.assign(new Error(m), { status: s });
-const fsGet = async (env, tok, path) => {
-  const r = await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/${path}`,
-    { headers: tok ? { Authorization: "Bearer " + tok } : {} });
-  if (!r.ok) throw err("Not allowed", 403);
-  return r.json();
-};
-const field = (d, k) => d.fields?.[k]?.stringValue || "";
-const uidOf = t => {
-  const p = JSON.parse(atob(t.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
-  return p.user_id || p.sub;
-};
+/** SemaAfrica server: payments, webhooks and discount codes (things the browser must never decide). */
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const admin = require('firebase-admin');
 
-// Does this student own a plan that is active and not expired? (asked with THEIR token, so rules apply)
-async function hasActivePlan(env, tok, uid) {
-  const r = await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents:runQuery`, {
-    method: "POST", headers: { Authorization: "Bearer " + tok, "Content-Type": "application/json" },
-    body: JSON.stringify({ structuredQuery: { from: [{ collectionId: "enrollments" }],
-      where: { fieldFilter: { field: { fieldPath: "userId" }, op: "EQUAL", value: { stringValue: uid } } }, limit: 50 } }) });
-  if (!r.ok) throw err("Not allowed", 403);
-  const now = Date.now();
-  return (await r.json()).some(x => {
-    const f = x.document && x.document.fields; if (!f) return false;
-    const exp = f.expiresAt && f.expiresAt.timestampValue;
-    return f.status && f.status.stringValue === "active" && (!exp || Date.parse(exp) > now);
+// Credentials: either ONE setting FIREBASE_SERVICE_ACCOUNT (the whole key file, or that file in base64, like PayTrack),
+// or the three separate settings below.
+let PROJECT_ID = '';
+function loadCredential() {
+  const raw = (process.env.FIREBASE_SERVICE_ACCOUNT || '').trim();
+  if (raw) {
+    try { const j = JSON.parse(raw.startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8')); PROJECT_ID = j.project_id || ''; return admin.credential.cert(j); }
+    catch { console.error('FIREBASE_SERVICE_ACCOUNT is not valid JSON (or base64 of the JSON).'); process.exit(1); }
+  }
+  const missing = ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY'].filter(k => !process.env[k]);
+  if (missing.length) {
+    console.error('Missing settings (Render > Environment): ' + missing.join(', ') + '. Or set FIREBASE_SERVICE_ACCOUNT instead.');
+    process.exit(1);
+  }
+  PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
+  return admin.credential.cert({
+    projectId: process.env.FIREBASE_PROJECT_ID,
+    clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+    privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
   });
 }
+admin.initializeApp({ credential: loadCredential() });
+console.log('Firebase project:', PROJECT_ID, PROJECT_ID === 'semiafrica' ? '' : '  <-- WARNING: SemaAfrica logins belong to the "semiafrica" project, so payments will fail with "log in again"');
 
-async function route(req, env) {
-  const tok = (req.headers.get("Authorization") || "").replace("Bearer ", "");
-  const url = new URL(req.url);
+if (process.env.PAYMENTS_MODE === 'live') require('./providers/daraja').assertConfigured();   // stop at start-up if a setting is missing
 
-  if (req.method === "PUT" && url.pathname === "/upload") {
-    if (!tok) throw err("Log in first", 401);
-    const uid = uidOf(tok);
-    const me = await fsGet(env, tok, `users/${uid}`);      // fails if the token is fake or expired
-    if (field(me, "role") !== "teacher") throw err("Teachers only", 403);
-    if (+req.headers.get("Content-Length") > MAX) throw err("File is over 25 MB", 413);
-    const name = decodeURIComponent(req.headers.get("X-File-Name") || "file").replace(/[^\w.-]/g, "_").slice(-80);
-    const key = `materials/${uid}/${Date.now()}-${name}`;
-    await env.BUCKET.put(key, req.body, { httpMetadata: { contentType: req.headers.get("Content-Type") || "application/octet-stream" } });
-    return Response.json({ key });
-  }
+const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', 1);   // Render sits behind a proxy, so req.ip is the real visitor
+const allowed = (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
+  .map(s => { try { return new URL(s).origin; } catch { return s.replace(/\/+$/, ''); } });   // tolerates a trailing slash or a path
+console.log('Allowed origins:', allowed.join(', ') || '(NONE SET: add ALLOWED_ORIGINS in Render)');
+app.use(cors({ origin: (o, cb) => {                                        // only your own sites
+  const ok = !o || allowed.includes(o);
+  if (!ok) console.warn('[cors] blocked origin:', o);
+  cb(null, ok);
+} }));
 
-  if (req.method === "DELETE" && url.pathname.startsWith("/file/")) {
-    if (!tok) throw err("Log in first", 401);
-    const uid = uidOf(tok), id = url.pathname.slice(6);
-    const doc = await fsGet(env, tok, "materials/" + id);                 // must be readable by this person
-    if (field(doc, "teacherId") !== uid) {                                  // not the uploader: only an admin may
-      const me = await fsGet(env, tok, `users/${uid}`);
-      if (field(me, "role") !== "admin") throw err("Only the teacher who uploaded this file can delete it", 403);
-    }
-    // Delete the record first (Firestore rules decide), then the stored file
-    const r = await fetch(`https://firestore.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/databases/(default)/documents/materials/${encodeURIComponent(id)}`,
-      { method: "DELETE", headers: { Authorization: "Bearer " + tok } });
-    if (!r.ok) throw err("Not allowed to delete this file", 403);
-    const key = field(doc, "fileKey");
-    if (key && key.startsWith(`materials/${field(doc, "teacherId")}/`)) await env.BUCKET.delete(key);
-    return Response.json({ ok: true });
-  }
+app.use(express.json({ limit: '100kb' }));
 
-  if (req.method === "GET" && url.pathname.startsWith("/file/")) {
-    const doc = await fsGet(env, tok, "materials/" + url.pathname.slice(6)); // Firestore rules decide who may read (free files need no login)
-    // Files shared with "all students" are for people who have a plan (the teacher, admins and free files are exempt)
-    const free = doc.fields && doc.fields.free && doc.fields.free.booleanValue === true;
-    if (!free && tok && field(doc, "studentId") === "" && field(doc, "teacherId") !== uidOf(tok)) {
-      const me = await fsGet(env, tok, `users/${uidOf(tok)}`);
-      if (field(me, "role") === "student" && !(await hasActivePlan(env, tok, uidOf(tok)))) throw err("Choose a plan to open this file", 403);
-    }
-    const key = field(doc, "fileKey");
-    if (!key.startsWith(`materials/${field(doc, "teacherId")}/`)) throw err("Not allowed", 403);
-    const obj = await env.BUCKET.get(key);
-    if (!obj) throw err("File not found", 404);
-    return new Response(obj.body, { headers: {
-      "Content-Type": obj.httpMetadata?.contentType || "application/octet-stream",
-      "Content-Disposition": `inline; filename="${field(doc, "fileName").replace(/"/g, "")}"`,
-      "Cache-Control": "private, no-store" } });
-  }
-  throw err("Not found", 404);
+// Small built-in rate limiter (no extra package): max `max` requests per minute per visitor and area.
+// Safaricom's payment callback is exempt so a real payment confirmation is never blocked.
+function limit(max) {
+  const hits = new Map();
+  setInterval(() => hits.clear(), 60 * 1000).unref();
+  return (req, res, next) => {
+    if (req.path === '/callback') return next();
+    const k = req.ip;
+    const n = (hits.get(k) || 0) + 1;
+    hits.set(k, n);
+    if (n > max) return res.status(429).json({ error: 'Too many requests. Please wait a minute and try again.' });
+    next();
+  };
 }
 
-export default {
-  async fetch(req, env) {
-    const allowed = env.ALLOWED_ORIGINS.split(",").map(s => s.trim());
-    const o = req.headers.get("Origin") || "";
-    const cors = { "Access-Control-Allow-Origin": allowed.includes(o) ? o : allowed[0], Vary: "Origin",
-      "Access-Control-Allow-Headers": "Authorization,Content-Type,X-File-Name", "Access-Control-Allow-Methods": "GET,PUT,DELETE,OPTIONS" };
-    if (req.method === "OPTIONS") return new Response(null, { headers: cors });
-    let res;
-    try { res = await route(req, env); }
-    catch (e) { res = Response.json({ error: e.message }, { status: e.status || 500 }); }
-    res = new Response(res.body, res);
-    Object.entries(cors).forEach(([k, v]) => res.headers.set(k, v));
-    return res;
-  }
-};
+app.use('/api/payments', limit(60), require('./routes/payments')(admin));
+app.use('/api/lessons', require('./routes/lessons')(admin));
+app.use('/api/admin', limit(30), require('./routes/admin')(admin));   // admin-only actions, such as deleting a person
+const reminders = require('./routes/reminders')(admin);
+app.use('/api/reminders', reminders);
+// Also check every 10 minutes while the server is awake (the timer service covers the times it is asleep)
+setInterval(() => reminders.run().catch(e => console.error('[reminders]', e.message)), 10 * 60 * 1000);
+
+// Health check only. Deliberately no endpoints that reveal env settings, database or file names.
+app.get('/api/health', (req, res) => res.json({ ok: true, service: 'semaafrica', mode: process.env.PAYMENTS_MODE || 'test', cancelHours: Number(process.env.CANCEL_HOURS || 12) }));
+app.get('/', (req, res) => res.send('SemaAfrica server OK'));
+app.use((req, res) => res.status(404).json({ error: 'Not found' }));
+app.use((err, req, res, next) => { console.error('[error]', err.message); res.status(500).json({ error: 'Server error' }); });
+
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => console.log(`SemaAfrica server on :${PORT} (payments mode: ${process.env.PAYMENTS_MODE || 'test'})`));
