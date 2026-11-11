@@ -49,7 +49,15 @@ module.exports = (admin) => {
   const httpErr = (m, s) => Object.assign(new Error(m), { status: s });
   const fail = (res, e) => res.status(e.status || 500).json({ error: e.status ? e.message : 'Something went wrong' });
 
-  // Turns a pending payment into an enrolment, exactly once (safe if the callback arrives twice)
+  // One-time teacher fee. Amount: Firestore settings/teacherFee {amount}, else TEACHER_FEE_KES, else 1000.
+  const FOREVER = () => Timestamp.fromDate(new Date('2099-12-31T00:00:00Z'));
+  async function teacherFeeAmount() {
+    const s = await db.collection('settings').doc('teacherFee').get();
+    const a = Number(s.exists ? s.data().amount : process.env.TEACHER_FEE_KES || 1000);
+    return Number.isInteger(a) && a > 0 ? a : 1000;
+  }
+
+  // Turns a pending payment into an enrolment (or a teacher activation), exactly once (safe if the callback arrives twice)
   async function settle(pendingId, result) {
     return db.runTransaction(async tx => {
       const pref = db.collection('payments_pending').doc(pendingId);
@@ -60,6 +68,19 @@ module.exports = (admin) => {
       if (!result.success) { tx.update(pref, { status: 'failed', reason: result.reason || '', settledAt: FieldValue.serverTimestamp() }); return 'failed'; }
       if (result.amount != null && Number(result.amount) < p.amount) {   // paid less than the price
         tx.update(pref, { status: 'amount_mismatch', paidAmount: Number(result.amount), settledAt: FieldValue.serverTimestamp() }); return 'amount_mismatch';
+      }
+      if (p.kind === 'teacherFee') {
+        // No reads are needed here, so writes are safe. Runs once because status is checked above.
+        tx.set(db.collection('users').doc(p.uid), {
+          feePaidUntil: FOREVER(), feePaidAt: FieldValue.serverTimestamp(), feeReceipt: result.receipt || p.reference,
+        }, { merge: true });
+        tx.set(db.collection('payments').doc(), {
+          userId: p.uid, userName: p.userName, courseId: '', courseName: 'Teacher service fee', kind: 'teacherFee',
+          amount: p.amount, currency: 'KES', method: 'M-Pesa', reference: result.receipt || p.reference,
+          discountCode: '', createdAt: FieldValue.serverTimestamp(),
+        });
+        tx.update(pref, { status: 'paid', receipt: result.receipt || '', settledAt: FieldValue.serverTimestamp() });
+        return 'paid';
       }
       const cs = await tx.get(db.collection('courses').doc(p.courseId));
       const kref = p.code ? db.collection('discountCodes').doc(p.code) : null;
@@ -114,6 +135,37 @@ module.exports = (admin) => {
   }
 
   // ── routes ─────────────────────────────────────────────────────────────
+  // Public: the fee amount shown on the teacher page
+  r.get('/teacher-fee/info', async (req, res) => {
+    try { res.json({ amount: await teacherFeeAmount(), label: 'one-time' }); } catch (e) { fail(res, e); }
+  });
+
+  // Teacher pays the one-time service fee
+  r.post('/teacher-fee/initiate', requireUser, async (req, res) => {
+    let pref;
+    try {
+      const phone = normalisePhone(req.body.phone);
+      if (!phone) throw httpErr('Enter a valid Kenyan M-Pesa number, like 0712 345 678', 400);
+      if (tooMany(req.uid)) throw httpErr('Please wait a few minutes and try again', 429);
+      const us = await db.collection('users').doc(req.uid).get();
+      const u = us.exists ? us.data() : {};
+      if (u.role !== 'teacher') throw httpErr('Only teacher accounts pay this fee', 403);
+      if (u.feePaidUntil && u.feePaidUntil.toMillis() > Date.now()) throw httpErr('Your account is already active', 400);
+      const amount = await teacherFeeAmount();
+      const reference = 'SEMA-T' + crypto.randomBytes(4).toString('hex').toUpperCase();
+      pref = db.collection('payments_pending').doc();
+      await pref.set({ kind: 'teacherFee', uid: req.uid, userName: u.name || '', courseId: '', amount,
+        code: '', phone, reference, status: 'pending', createdAtMs: Date.now(), createdAt: FieldValue.serverTimestamp() });
+      const out = await getProvider().startStk({ amount, phone, reference });
+      await pref.update({ checkoutId: out.checkoutId || '' });
+      res.json({ paymentId: pref.id, amount, reference });
+    } catch (e) {
+      if (pref) await pref.update({ status: 'failed', reason: e.message }).catch(() => {});
+      console.error('[teacher-fee]', e.message);
+      e.status ? fail(res, e) : res.status(502).json({ error: 'Could not send the M-Pesa prompt. Please try again.' });
+    }
+  });
+
   // Show the price (with any code) before the student pays
   r.post('/quote', requireUser, async (req, res) => {
     try { const q = await priceFor(req.body.courseId, req.body.code); res.json({ amount: q.amount, discount: q.discount, currency: 'KES' }); }
