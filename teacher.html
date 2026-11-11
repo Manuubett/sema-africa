@@ -28,6 +28,17 @@ import {doc,getDoc,setDoc,collection,query,where,getDocs,addDoc,updateDoc,delete
 const SERVER_URL=(FB.SERVER_URL||"").trim().replace(/\/+$/,"");
 const WORKER=(WORKER_URL||"").trim().replace(/\/+$/,"");
 
+// ---- One-time service fee ----
+// The server sets users/{uid}.feePaidUntil after M-Pesa confirms. The browser only reads it, never writes it.
+let feeInfo=null,feeTimer=null,feeNudge=false;
+const feeUntil=()=>me&&me.feePaidUntil&&me.feePaidUntil.toDate?me.feePaidUntil.toDate():null;
+const feeOk=()=>{const d=feeUntil();return !!d&&d>new Date()};
+async function fapi(path,method="GET",body){
+  const r=await fetch(SERVER_URL+"/api/payments"+path,{method,headers:{"Content-Type":"application/json",Authorization:"Bearer "+await auth.currentUser.getIdToken()},body:body?JSON.stringify(body):undefined});
+  const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||"Something went wrong");return d}
+async function reloadMe(){const s=await getDoc(doc(db,"users",uid));if(s.exists())me=s.data()}
+const stopFee=()=>{clearInterval(feeTimer);feeTimer=null};
+
 // The Render free plan can take up to a minute to wake up, so allow for that.
 async function staffCancel(id){
   const c=new AbortController(),t=setTimeout(()=>c.abort(),75000);
@@ -63,9 +74,7 @@ const mon=d=>{d=new Date(d);d.setHours(0,0,0,0);d.setDate(d.getDate()-((d.getDay
 const TZ=(Intl.DateTimeFormat().resolvedOptions().timeZone)||"";
 const ST={open:"Open slot",booked:"Booked",attended:"Attended",absent:"Absent",cancelled:"Cancelled"};
 const empty=(t,p)=>`<div class="empty"><strong>${t}</strong><p>${p}</p></div>`;
-// The course and the topic often hold the same words; show them once
-const what=l=>{const a=(l.courseName||l.type||"").trim(),b=(l.topic||"").trim();if(!b||a===b||a.includes(b))return a;if(b.includes(a))return b;return a+" · "+b};
-let links={},uid,me,students=[],lessons=[],mats=[],prog=[],courses=[],plans=[],schedPre="",week=mon(new Date()),cur="timetable",pick="",showC=false,editL="",qu=[],quizzes=[],attempts=[],qb=null,qres=null,qlErr=false,selDay="";
+let links={},uid,me,students=[],lessons=[],mats=[],prog=[],courses=[],plans=[],schedPre="",prof=null,prPhoto="",week=mon(new Date()),cur="timetable",pick="",showC=false,editL="",qu=[],quizzes=[],attempts=[],qb=null,qres=null,qlErr=false;
 const nameOf=id=>(students.find(s=>s.id===id)||{}).name||"";
 const opts=(sel)=>students.map(s=>`<option value="${s.id}" ${s.id===sel?"selected":""}>${esc(s.name)}</option>`).join("");
 
@@ -93,6 +102,7 @@ async function load(){
   let lk=[];[lessons,mats,prog,lk,quizzes,attempts]=await Promise.all([own("lessons"),own("materials"),own("progress"),own("lessonLinks"),safe("quizzes"),safe("quizAttempts")]);links={};lk.forEach(x=>links[x.id]=x.meetLink);
   try{courses=(await getDocs(collection(db,"courses"))).docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.active!==false).sort((a,b)=>a.usd-b.usd)}catch{courses=[]}
   try{plans=(await getDocs(collection(db,"curriculum"))).docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.active!==false).sort((a,b)=>(a.courseNo||0)-(b.courseNo||0)||(a.topicNo||0)-(b.topicNo||0))}catch{plans=[]}
+  try{const ps=await getDoc(doc(db,"teacherProfiles",uid));prof=ps.exists()?ps.data():null}catch{prof=null}
   const ms=x=>(x&&x.toMillis)?x.toMillis():0;
   quizzes.sort((a,b)=>ms(b.createdAt)-ms(a.createdAt));
   attempts.sort((a,b)=>ms(b.date)-ms(a.date));
@@ -102,7 +112,7 @@ async function load(){
   students=(await getDocs(query(collection(db,"users"),where("role","==","student")))).docs.map(d=>({id:d.id,...d.data()}));
 }
 const lessonRow=(l,acts="")=>`<div class="row"><div><strong>${fd(T(l))}, ${ft(T(l))}</strong> <span class="pill">${ST[l.status]||l.status}</span>
-  <small>${esc(l.studentName||"No student yet")} · ${esc(what(l))} · ${l.duration} min</small></div><div class="acts">${joinBtn(l)}${acts}</div></div>`;
+  <small>${esc(l.studentName||"No student yet")} · ${esc(l.courseName||l.type)}${l.topic?" · "+esc(l.topic):""} · ${l.duration} min</small></div><div class="acts">${joinBtn(l)}${acts}</div></div>`;
 const btn=(a,id,t,line=true)=>`<button class="btn sm ${line?"line":""}" type="button" data-act="${a}" data-id="${id}">${t}</button>`;
 const linkBtn=l=>btn("link",l.id,linkOf(l)?"Change link":"Add link");
 
@@ -162,6 +172,14 @@ function qResults(){
     (at.length?at.map(a=>`<div class="row" style="display:block"><details><summary><strong>${esc(a.studentName||nameOf(a.studentId))}</strong> · ${a.score}/${a.total} · ${a.date&&a.date.toDate?fd(a.date.toDate()):""}</summary>${det(a)}</details></div>`).join(""):empty("No attempts yet","Results appear here when students submit this quiz."))+
     (todo.length?`<p><small>Not done yet: ${todo.map(x=>esc(x.name)).join(", ")}</small></p>`:"")}
 
+// Profile photo: cropped to a square and shrunk in the browser, so it is small enough to keep with the profile
+const shrink=f=>new Promise((res,rej)=>{
+  const im=new Image(),u=URL.createObjectURL(f);
+  im.onload=()=>{const S=480,c=document.createElement("canvas");c.width=c.height=S;const m=Math.min(im.width,im.height);
+    c.getContext("2d").drawImage(im,(im.width-m)/2,(im.height-m)/2,m,m,0,0,S,S);URL.revokeObjectURL(u);
+    const d=c.toDataURL("image/jpeg",.82);d.length>300000?rej(new Error("That photo is too detailed. Try a smaller one.")):res(d)};
+  im.onerror=()=>{URL.revokeObjectURL(u);rej(new Error("That file is not a photo this page can read."))};im.src=u});
+
 const PAGES={
 students:["Student list",()=>{
   const att=id=>lessons.filter(l=>l.studentId===id&&l.status==="attended").length;
@@ -171,37 +189,19 @@ students:["Student list",()=>{
 
 timetable:["Weekly timetable",()=>{
   const days=[...Array(7)].map((_,i)=>{const d=new Date(week);d.setDate(d.getDate()+i);return d});
-  const today=new Date(),todayS=today.toDateString(),midnight=new Date(todayS);
+  const today=new Date(),todayS=today.toDateString();
   const vis=lessons.filter(l=>showC||l.status!=="cancelled");
-  const on=d=>vis.filter(l=>T(l).toDateString()===d.toDateString());
-  const chosen=days.find(d=>iso(d)===selDay)||days.find(d=>d.toDateString()===todayS)||days[0];
-  const list=on(chosen);
-  const acts=l=>(l.status!=="cancelled"?joinBtn(l):"")
-    +(isLive(l)?btn("edit",l.id,"Edit"):"")
-    +(l.status==="booked"&&isLive(l)?btn("remind",l.id,"Remind")+btn("cancelled",l.id,"Cancel"):"")
-    +(l.status==="booked"&&!isLive(l)?btn("attended",l.id,"Attended",false)+btn("absent",l.id,"Absent"):"")
-    +(["open","cancelled"].includes(l.status)?btn("dellesson",l.id,"Delete"):"");
-  const card=l=>{const s=T(l),e=new Date(+s+l.duration*60000);
-    return `<article class="tl-card ${esc(l.status)}"><div class="tl-time"><strong>${ft(s)}</strong><span>${ft(e)}</span></div>
-    <div class="tl-main"><div class="tl-head"><h3>${esc(l.studentName||"Open slot")}</h3><span class="pill">${ST[l.status]||esc(l.status)}</span></div>
-    <p>${esc(what(l))} · ${l.duration} min</p>${["attended","absent"].includes(l.status)?"<small>Kept as a record</small>":""}</div>
-    <div class="tl-acts">${acts(l)}</div></article>`};
-  return `<p class="msg" id="m"></p>
-  <details class="tl-add" ${schedPre?"open":""}><summary>＋ Add a time slot</summary>
-  <form class="form" id="slotF"><label>Date<input type="date" id="sd" required min="${iso(today)}" value="${iso(chosen<midnight?today:chosen)}"></label><label>Time<input type="time" id="st" required></label>
+  return `<form class="form" id="slotF"><label>Date<input type="date" id="sd" required min="${iso(today)}" value="${iso(today)}"></label><label>Time<input type="time" id="st" required></label>
   <label>Lesson (course)<select id="sco" required><option value="">Choose the lesson…</option>${courses.map(c=>`<option value="${c.id}">${esc(c.name)} · ${c.minutes} min</option>`).join("")}</select></label>
   ${plans.length?`<label>Lesson plan (optional)<select id="spl"><option value="">Not from a lesson plan</option>${planOpts()}</select></label>`:""}
   <label>Topic shown to students (optional)<input id="stp" maxlength="140" placeholder="e.g. Greetings and introductions"></label>
   <label>Student (leave empty so students can book it)<select id="ss"><option value="">Open slot</option>${opts()}</select></label>
   <label>Meeting link<input id="sm" type="url" required placeholder="https://meet.google.com/…" value="${esc(lastLink())}"></label>
-  ${courses.length?"":`<p class="msg err full">No lessons to choose from yet. Ask the admin to add courses first.</p>`}<button class="btn">Add to timetable</button></form></details>
-  <div class="tl-bar">${btn("prev","","‹ Previous")}<strong>${fd(days[0])} – ${fd(days[6])}</strong>${btn("next","","Next ›")}${btn("today","","This week")}
+  ${courses.length?"":`<p class="msg err full">No lessons to choose from yet. Ask the admin to add courses first.</p>`}<button class="btn">Add to timetable</button><p class="msg full" id="m"></p></form>
+  <div class="nav2">${btn("prev","","Previous week")}<strong>${fd(days[0])} – ${fd(days[6])}</strong>${btn("next","","Next week")}${btn("today","","This week")}
   <label class="chk"><input type="checkbox" id="sc" ${showC?"checked":""}> Show cancelled</label></div>
-  <div class="tl-days" role="group" aria-label="Days of the week">${days.map(d=>{const n=on(d).length,isSel=d===chosen;
-    return `<button type="button" class="tl-day ${isSel?"sel":""} ${d.toDateString()===todayS?"today":""}" data-act="day" data-id="${iso(d)}" aria-pressed="${isSel}"><span>${d.toLocaleDateString([],{weekday:"short"})}</span><strong>${d.getDate()}</strong><i>${n?n+(n===1?" class":" classes"):"–"}</i></button>`}).join("")}</div>
-  <h2 class="tl-h">${chosen.toDateString()===todayS?"Today, ":""}${chosen.toLocaleDateString([],{weekday:"long",day:"numeric",month:"long"})}</h2>
-  ${list.length?`<div class="tl-list">${list.map(card).join("")}</div>`:empty("No lessons on this day","Open Add a time slot above to put a lesson here.")}
-  <p class="note"><small>Times are shown in your device's time zone${TZ?" ("+esc(TZ)+")":""}.</small></p>`},
+  <p><small>Times are shown in your device's time zone${TZ?" ("+esc(TZ)+")":""}.</small></p>
+  <div class="week">${days.map(d=>`<div class="day ${d.toDateString()===todayS?"today":""}"><h3>${fd(d)}${d.toDateString()===todayS?" · Today":""}</h3>${vis.filter(l=>T(l).toDateString()===d.toDateString()).map(l=>`<div class="slot ${esc(l.status)}"><strong>${ft(T(l))}</strong> ${l.duration}m<span class="st">${ST[l.status]||esc(l.status)}</span>${esc(l.studentName||"Open")}<small>${esc(l.courseName||l.type)}${l.topic?" · "+esc(l.topic):""}</small><div class="acts">${l.status!=="cancelled"?joinBtn(l):""}${isLive(l)?btn("edit",l.id,"Edit"):""}${l.status==="booked"&&isLive(l)?btn("remind",l.id,"Remind")+btn("cancelled",l.id,"Cancel"):""}${l.status==="booked"&&!isLive(l)?btn("attended",l.id,"Attended",false)+btn("absent",l.id,"Absent"):""}${["open","cancelled"].includes(l.status)?btn("dellesson",l.id,"Delete"):""}${["attended","absent"].includes(l.status)?"<small>Kept as a record</small>":""}</div></div>`).join("")}</div>`).join("")}</div>`},
  ()=>{
   $("sc").onchange=e=>{showC=e.target.checked;show("timetable")};
   if($("spl"))$("spl").onchange=e=>{const t=planText(e.target.value);if(t)$("stp").value=t};
@@ -324,6 +324,59 @@ history:["Attendance and lesson history",()=>{const now=Date.now();
   return `<p><strong>${n("attended")}</strong> attended · <strong>${n("absent")}</strong> absent · <strong>${n("cancelled")}</strong> cancelled</p><p class="msg" id="m"></p>`+
   (l.length?l.map(x=>lessonRow(x,x.status==="booked"?btn("attended",x.id,"Attended",false)+btn("absent",x.id,"Absent"):x.status==="cancelled"?btn("dellesson",x.id,"Delete"):"")).join(""):empty("No past lessons","Completed lessons will be listed here."))}],
 
+profile:["My profile",()=>{const p=prof||{};
+  return `<p class="msg" id="m"></p><p>This is what visitors see about you on the SemaAfrica website. Tick <strong>Show me on the website</strong> when you are happy with it.</p>
+  <form class="form" id="prF">
+  <label class="full">Photo<span style="display:flex;gap:14px;align-items:center;flex-wrap:wrap"><img id="prImg" alt="" style="width:96px;height:96px;border-radius:20px;object-fit:cover;background:#0002" ${p.photo?`src="${esc(p.photo)}"`:"hidden"}><input type="file" id="prFile" accept="image/*"><button class="btn line sm" type="button" id="prRm">Remove photo</button></span><small>The photo is cropped to a square and made small automatically. A clear head-and-shoulders photo works best.</small></label>
+  <label>Name shown on the website<input id="prN" required maxlength="60" value="${esc(p.name||me.name||"")}"></label>
+  <label>One line about you<input id="prH" maxlength="90" value="${esc(p.headline||"")}" placeholder="e.g. Nairobi, Kenya · 3 years teaching Swahili"></label>
+  <label>Specialities, separated by commas<input id="prT" maxlength="80" value="${esc(p.tags||"")}" placeholder="Beginners, Travel, Conversation"></label>
+  <label class="full">About you<textarea id="prB" rows="4" maxlength="600">${esc(p.bio||"")}</textarea></label>
+  <label class="full">How you teach, in one sentence<input id="prQ" maxlength="200" value="${esc(p.quote||"")}"></label>
+  <label class="full">When you are usually available<input id="prA" maxlength="120" value="${esc(p.availability||"")}" placeholder="e.g. Mon to Fri 8am to 2pm EAT"></label>
+  <label class="chk"><input type="checkbox" id="prP" ${p.published?"checked":""}> Show me on the website</label>
+  <button class="btn">Save profile</button></form>`},
+ ()=>{prPhoto=(prof&&prof.photo)||"";
+  $("prFile").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;
+    try{prPhoto=await shrink(f);$("prImg").src=prPhoto;$("prImg").hidden=false;say("Photo ready. Tap Save profile to keep it.")}catch(x){say(x.message,true)}};
+  $("prRm").onclick=()=>{prPhoto="";$("prImg").hidden=true;$("prImg").removeAttribute("src");say("Photo removed. Tap Save profile to keep that.")};
+  $("prF").onsubmit=e=>{e.preventDefault();busy(sub(e.target),async()=>{
+    const d={teacherId:uid,name:$("prN").value.trim(),headline:$("prH").value.trim(),tags:$("prT").value.trim(),bio:$("prB").value.trim(),quote:$("prQ").value.trim(),availability:$("prA").value.trim(),photo:prPhoto,published:$("prP").checked,updatedAt:serverTimestamp()};
+    if(!d.name)throw new Error("Write the name that visitors will see.");
+    if(d.published&&!d.bio)throw new Error("Add a short \"About you\" before you show your profile on the website.");
+    await setDoc(doc(db,"teacherProfiles",uid),d);
+    await refresh("Profile saved."+(d.published?" It is now on the website.":" It is not shown on the website yet."))})}}],
+
+fee:["Service fee",()=>{
+  if(feeOk())return `<p class="msg" id="m"></p><div class="row"><div><strong>Your teacher account is active</strong><small>Your one-time service fee is paid. Thank you.</small></div></div>`;
+  const price=feeInfo?`<p style="font:800 2rem var(--display,inherit);margin:6px 0">KES ${Number(feeInfo.amount).toLocaleString()} <small>${esc(feeInfo.label||"")}</small></p>`:"";
+  return `<p class="msg" id="m"></p>
+  <div class="row"><div><strong>Activate your teacher account</strong><small>Pay the one-time service fee to add lesson times, receive bookings and get reminder emails.</small></div></div>
+  ${price}
+  <form class="form" id="feeF"><label>M-Pesa phone number<input id="fph" type="tel" inputmode="tel" autocomplete="tel" placeholder="07XX XXX XXX" required></label>
+  <button class="btn" id="feeBtn">Pay with M-Pesa</button>
+  <button class="btn line" type="button" id="feeChk" hidden>I have paid, check now</button></form>
+  <p><small>You will get an M-Pesa prompt on your phone. Enter your PIN to confirm. This page updates when the payment is confirmed.</small></p>`},
+ ()=>{
+  const f=$("feeF");if(!f)return;
+  const done=async()=>{stopFee();await reloadMe();await load();show("timetable");say("Payment confirmed. Your account is active.")};
+  // returns true when the payment is settled (paid or failed)
+  const check=async id=>{const s=await fapi("/status/"+id);
+    if(s.status==="paid"){await done();return true}
+    if(["failed","amount_mismatch"].includes(s.status)){stopFee();say(s.reason||"The payment did not go through. Please try again.",true);$("feeBtn").disabled=false;$("feeChk").hidden=true;return true}
+    return false};
+  f.onsubmit=async e=>{e.preventDefault();
+    const b=$("feeBtn");if(b.disabled)return;b.disabled=true;
+    try{
+      const d=await fapi("/teacher-fee/initiate","POST",{phone:$("fph").value});
+      say("Check your phone and enter your M-Pesa PIN to pay KES "+Number(d.amount).toLocaleString()+".");
+      $("feeChk").hidden=false;
+      $("feeChk").onclick=ev=>busy(ev.currentTarget,async()=>{if(!(await check(d.paymentId)))say("Not confirmed yet. M-Pesa can take up to a minute.")});
+      let n=0;stopFee();feeTimer=setInterval(async()=>{
+        if(++n>45){stopFee();say("Still waiting. If you have paid, tap the check button. If not, try again.",true);if($("feeBtn"))$("feeBtn").disabled=false;return}
+        try{await check(d.paymentId)}catch{}},4000);
+    }catch(x){say((x&&x.message)||"Something went wrong",true);b.disabled=false}}}],
+
 settings:["Email settings",()=>`<p class="msg" id="m"></p>
   <form class="form" id="stF"><label class="chk"><input type="checkbox" id="stM" ${me.morningEmail!==false?"checked":""}> Email me a summary every morning</label>
   <small class="full">It lists today's lessons with their Join links, lessons that still need a meeting link, and lessons waiting to be marked attended or absent. It arrives early in the morning in your time zone${TZ?" ("+esc(TZ)+")":""}. Nothing is sent on a quiet day with nothing to report.</small>
@@ -337,8 +390,13 @@ settings:["Email settings",()=>`<p class="msg" id="m"></p>
 };
 
 async function refresh(msg){await load();show(cur);if(msg)say(msg)}
-function show(k){if(k!=="upcoming")editL="";cur=k;const [t,h,b]=PAGES[k];$("title").textContent=t;view.innerHTML=h();if(b)b();
-  $("side").querySelectorAll("button[data-k]").forEach(x=>x.setAttribute("aria-current",x.dataset.k===k))}
+function show(k){
+  // Teachers who have not paid the service fee can only see the fee page
+  if(!feeOk()&&k!=="fee"){k="fee";feeNudge=true}
+  if(k!=="fee")stopFee();
+  if(k!=="upcoming")editL="";cur=k;const [t,h,b]=PAGES[k];$("title").textContent=t;view.innerHTML=h();if(b)b();
+  $("side").querySelectorAll("button[data-k]").forEach(x=>x.setAttribute("aria-current",x.dataset.k===k));
+  if(feeNudge){feeNudge=false;say("Pay the service fee to unlock your timetable, lessons and quizzes.",true)}}
 
 // Ask for a link and save it for one or more lessons
 async function setLinks(ids,current,question){
@@ -354,8 +412,7 @@ async function setLinks(ids,current,question){
 
 view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const a=b.dataset.act,id=b.dataset.id;
   if(a==="prev"||a==="next"){week.setDate(week.getDate()+(a==="next"?7:-7));return show("timetable")}
-  if(a==="today"){week=mon(new Date());selDay="";return show("timetable")}
-  if(a==="day"){selDay=id;return show("timetable")}
+  if(a==="today"){week=mon(new Date());return show("timetable")}
   if(a==="prog"){pick=id;return show("progress")}
   if(a==="sched"){schedPre=id;return show("timetable")}
   if(a==="remind"||a==="remindall"){
@@ -475,10 +532,13 @@ onAuthStateChanged(auth,async u=>{
   try{
     uid=u.uid;const s=await getDoc(doc(db,"users",uid));me=s.exists()?s.data():{role:"student"};
     if(me.role!=="teacher")return location.href=HOME[me.role]||HOME.student;
-    await load();
+    // Unpaid teachers may be locked out by the rules, so a failed load must not stop the fee page from opening
+    try{await load()}catch(e){if(feeOk())throw e}
     Object.entries(PAGES).forEach(([k,v])=>{const b=document.createElement("button");b.dataset.k=k;b.textContent=v[0];b.onclick=()=>{if(k==="quizzes"){qb=null;qres=null}show(k)};$("side").appendChild(b)});
     const o=document.createElement("button");o.className="out";o.textContent="Log out";o.onclick=()=>signOut(auth).then(()=>location.href="index.html");$("side").appendChild(o);
-    show("timetable");
+    show(feeOk()?"timetable":"fee");
+    // Load the fee amount without blocking the page (the Render server may be asleep)
+    if(SERVER_URL&&!feeOk())fetch(SERVER_URL+"/api/payments/teacher-fee/info").then(r=>r.json()).then(d=>{feeInfo=d;const p=$("fph");if(cur==="fee"&&!feeOk()&&(!p||!p.value))show("fee")}).catch(()=>{});
     // Wake the Render server early so cancelling a lesson is quick later
     if(SERVER_URL)fetch(SERVER_URL+"/",{mode:"no-cors"}).catch(()=>{});
   }catch(x){fatal(x)}
