@@ -11,11 +11,14 @@
     <button role="tab" id="tReg" aria-selected="false">Create account</button>
   </div>
   <form id="f" novalidate>
+    <label id="roleL" hidden>I am joining as
+      <select id="role"><option value="student">A student</option><option value="teacher">A teacher</option></select></label>
     <label id="nameL" hidden>Full name<input id="name" autocomplete="name"></label>
     <label>Email<input id="email" type="email" autocomplete="email" required></label>
     <label>Password<input id="pass" type="password" minlength="6" autocomplete="current-password" required></label>
     <label id="goalL" hidden>I want to learn as
       <select id="goal"><option>A visitor</option><option>A resident</option><option>A serious learner</option></select></label>
+    <p id="tNote" hidden><small>Teacher accounts pay a one-time service fee after sign-up to start adding lessons.</small></p>
     <button class="btn" id="go" type="submit">Log in</button>
     <p class="msg" id="msg" aria-live="polite"></p>
     <a href="#" id="forgot">Forgot your password?</a>
@@ -29,16 +32,21 @@ import {doc,getDoc,setDoc,serverTimestamp} from "https://www.gstatic.com/firebas
 const $=id=>document.getElementById(id);
 const chosen=new URLSearchParams(location.search).get("plan");if(chosen)sessionStorage.setItem("sema_plan",chosen);   // used by the student dashboard
 let mode="login";
+// Shows the learner question for students and the fee note for teachers
+function syncRole(){const t=$("role").value==="teacher",reg=mode==="register";
+  $("goalL").hidden=!reg||t;$("tNote").hidden=!reg||!t}
 function setMode(m){
   mode=m;const reg=m==="register";
-  $("nameL").hidden=$("goalL").hidden=!reg;
+  $("nameL").hidden=$("roleL").hidden=!reg;
   $("tLogin").setAttribute("aria-selected",!reg);$("tReg").setAttribute("aria-selected",reg);
   $("go").textContent=reg?"Create my account":"Log in";
   $("pass").autocomplete=reg?"new-password":"current-password";
-  $("forgot").hidden=reg;$("msg").textContent="";
+  $("forgot").hidden=reg;$("msg").textContent="";syncRole();
 }
 $("tLogin").onclick=()=>setMode("login");$("tReg").onclick=()=>setMode("register");
+$("role").onchange=syncRole;
 if(location.hash==="#register")setMode("register");
+if(new URLSearchParams(location.search).get("role")==="teacher"){setMode("register");$("role").value="teacher";syncRole()}   // e.g. auth.html?role=teacher from a "Teach with us" link
 function say(t,ok){$("msg").textContent=t;$("msg").className="msg "+(ok?"ok":"err")}
 const ERR={"auth/invalid-credential":"Email or password is wrong.","auth/email-already-in-use":"That email already has an account. Log in instead.",
  "auth/weak-password":"Use a password of 6 or more characters.","auth/invalid-email":"Enter a valid email address.","auth/too-many-requests":"Too many attempts. Wait a few minutes and try again.",
@@ -56,9 +64,13 @@ $("f").onsubmit=async e=>{
   try{
     if(mode==="register"){
       const {user}=await createUserWithEmailAndPassword(auth,email,pass);
-      const name=$("name").value.trim();
+      const name=$("name").value.trim(),teacher=$("role").value==="teacher";
       await updateProfile(user,{displayName:name});
-      await setDoc(doc(db,"users",user.uid),{name,email,goal:$("goal").value,role:"student",remindEmail:true,tz:Intl.DateTimeFormat().resolvedOptions().timeZone||"",createdAt:serverTimestamp()});
+      const base={name,email,tz:Intl.DateTimeFormat().resolvedOptions().timeZone||"",createdAt:serverTimestamp()};
+      // Fee fields are never written here: only the server sets them after M-Pesa confirms
+      await setDoc(doc(db,"users",user.uid),teacher
+        ?{...base,role:"teacher",morningEmail:true}
+        :{...base,role:"student",goal:$("goal").value,remindEmail:true});
       await route(user.uid);
     }else{
       const {user}=await signInWithEmailAndPassword(auth,email,pass);
