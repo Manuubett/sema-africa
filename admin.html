@@ -24,7 +24,7 @@ details.qz{margin-bottom:10px}details.qz>summary{cursor:pointer}details.qz detai
 import {auth,db,HOME} from "./js/firebase.js";
 import * as FB from "./js/firebase.js";
 import {onAuthStateChanged,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {doc,getDoc,collection,getDocs,addDoc,setDoc,updateDoc,deleteDoc,writeBatch,Timestamp,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {doc,getDoc,collection,getDocs,addDoc,setDoc,updateDoc,deleteDoc,deleteField,writeBatch,Timestamp,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 const SERVER_URL=(FB.SERVER_URL||"").trim().replace(/\/+$/,"");
 // Booked lessons are cancelled on the server so the student gets their lesson back. Render's free plan can take a minute to wake up.
 async function staffCancel(id){
@@ -33,6 +33,19 @@ async function staffCancel(id){
     const r=await fetch(SERVER_URL+"/api/lessons/staff-cancel",{method:"POST",signal:c.signal,headers:{"Content-Type":"application/json",Authorization:"Bearer "+await auth.currentUser.getIdToken()},body:JSON.stringify({lessonId:id})});
     const d=await r.json().catch(()=>({}));
     if(!r.ok)throw new Error(d.error||"Could not cancel");
+    return d;
+  }catch(e){
+    if(e.name==="AbortError")throw new Error("The server took too long to answer. Wait a minute, then check the list before trying again.");
+    throw e;
+  }finally{clearTimeout(t)}
+}
+// Deleting a person removes their login too, which only the server can do
+async function deleteUserApi(userId){
+  const c=new AbortController(),t=setTimeout(()=>c.abort(),75000);
+  try{
+    const r=await fetch(SERVER_URL+"/api/admin/delete-user",{method:"POST",signal:c.signal,headers:{"Content-Type":"application/json",Authorization:"Bearer "+await auth.currentUser.getIdToken()},body:JSON.stringify({userId})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||"Could not delete");
     return d;
   }catch(e){
     if(e.name==="AbortError")throw new Error("The server took too long to answer. Wait a minute, then check the list before trying again.");
@@ -56,8 +69,10 @@ const dt=v=>v&&v.toDate?v.toDate():null, fd=v=>{const d=dt(v);return d?d.toLocal
 const money=(a,c)=>(c==="KES"?"KES ":"$")+Number(a||0).toLocaleString();
 const empty=(t,p)=>`<div class="empty"><strong>${t}</strong><p>${p}</p></div>`;
 const bt=(a,id,t,line=true,x="")=>`<button class="btn sm ${line?"line":""}" data-act="${a}" data-id="${id}" ${x}>${t}</button>`;
-let uid,users=[],courses=[],enr=[],pays=[],lessons=[],codes=[],quizzes=[],attempts=[],qErr=false,cur="overview",editC="",repCur="USD",plans=[],plErr=false,editP="",selB=new Set(),remOff=[1440,60],remErr=false;
+let uid,users=[],courses=[],enr=[],pays=[],lessons=[],codes=[],quizzes=[],attempts=[],qErr=false,cur="overview",editC="",repCur="USD",plans=[],plErr=false,editP="",selB=new Set(),remOff=[1440,60],remErr=false,feeAmt=0;
 const students=()=>users.filter(u=>u.role==="student");
+// A teacher has paid (or been waived) when feePaidUntil is in the future
+const feeOk=u=>{const d=dt(u.feePaidUntil);return !!d&&d>new Date()};
 function flash(t,ok=true){$("flash").className="msg "+(ok?"ok":"err");$("flash").textContent=t}
 async function load(){
   const all=c=>getDocs(collection(db,c)).then(s=>s.docs.map(d=>({id:d.id,...d.data()})));
@@ -68,6 +83,8 @@ async function load(){
   // Lesson plans load safely too, so the page still works before their rules are published
   plErr=false;try{plans=(await all("curriculum")).sort((a,b)=>(a.courseNo||0)-(b.courseNo||0)||(a.topicNo||0)-(b.topicNo||0))}catch{plans=[];plErr=true}
   remErr=false;try{const s=await getDoc(doc(db,"settings","reminders"));remOff=s.exists()&&Array.isArray(s.data().offsets)?s.data().offsets:[1440,60]}catch{remOff=[1440,60];remErr=true}
+  // Teacher fee amount (0 means "not set here", so the server uses TEACHER_FEE_KES or 1000)
+  try{const s=await getDoc(doc(db,"settings","teacherFee"));feeAmt=s.exists()?Number(s.data().amount)||0:0}catch{feeAmt=0}
   const ms=x=>(x&&x.toMillis)?x.toMillis():0;
   quizzes.sort((a,b)=>ms(b.createdAt)-ms(a.createdAt));
   attempts.sort((a,b)=>ms(b.date)-ms(a.date));
@@ -98,15 +115,31 @@ overview:["Overview",()=>{
   const mp=pays.filter(p=>dt(p.createdAt)&&mk(dt(p.createdAt))===mk(now));
   const rev=["USD","KES"].map(c=>money(mp.filter(p=>p.currency===c).reduce((a,p)=>a+ +p.amount,0),c)).join(" + ");
   const up=lessons.filter(l=>["open","booked"].includes(l.status)&&dt(l.start)>now).length;
-  return `<div class="g">${[["Students",students().length],["Teachers",users.filter(u=>u.role==="teacher").length],["Active enrolments",enr.filter(e=>e.status==="active").length],["Upcoming lessons",up],["Revenue this month",rev]].map(([a,b])=>`<div class="card"><small>${a}</small><h2>${b}</h2></div>`).join("")}</div>`}],
+  const tch=users.filter(u=>u.role==="teacher");
+  return `<div class="g">${[["Students",students().length],["Teachers",tch.length],["Teachers who paid the fee",tch.filter(feeOk).length],["Active enrolments",enr.filter(e=>e.status==="active").length],["Upcoming lessons",up],["Revenue this month",rev]].map(([a,b])=>`<div class="card"><small>${a}</small><h2>${b}</h2></div>`).join("")}</div>`}],
 
 users:["Students and teachers",()=>`<div class="form"><label>Search<input id="q" placeholder="Name or email"></label><label>Show<select id="rf"><option value="">Everyone</option><option value="student">Students</option><option value="teacher">Teachers</option><option value="admin">Admins</option></select></label></div><div id="ul"></div>`,
  ()=>{const rb=(id,r,t)=>`<button class="btn sm line" data-act="role" data-id="${id}" data-r="${r}">${t}</button>`;
   const draw=()=>{const q=$("q").value.toLowerCase(),f=$("rf").value;
    const l=users.filter(u=>(!f||u.role===f)&&((u.name||"")+(u.email||"")).toLowerCase().includes(q));
-   $("ul").innerHTML=l.length?l.map(u=>`<div class="row"><div><strong>${esc(u.name)}</strong> <span class="pill">${esc(u.role)}</span><small>${esc(u.email)} · ${esc(u.goal||"")} · joined ${fd(u.createdAt)}</small></div>
-    <div class="acts">${u.id===uid?"<small>You</small>":u.role==="student"?rb(u.id,"teacher","Make teacher"):u.role==="teacher"?rb(u.id,"student","Make student"):""}</div></div>`).join(""):empty("No one found","Try another search.")};
+   $("ul").innerHTML=l.length?l.map(u=>`<div class="row"><div><strong>${esc(u.name)}</strong> <span class="pill">${esc(u.role)}</span>${u.role==="teacher"?` <span class="pill">${feeOk(u)?"Fee paid":"Fee unpaid"}</span>`:""}<small>${esc(u.email)} · ${esc(u.goal||"")} · joined ${fd(u.createdAt)}</small></div>
+    <div class="acts">${u.id===uid?"<small>You</small>":(u.role==="student"?rb(u.id,"teacher","Make teacher"):u.role==="teacher"?rb(u.id,"student","Make student"):"")+(u.role!=="admin"?bt("deluser",u.id,"Delete",true,'data-r="'+esc(u.role)+'"'):"")}</div></div>`).join(""):empty("No one found","Try another search.")};
   $("q").oninput=draw;$("rf").onchange=draw;draw()}],
+
+teacherfees:["Teacher fees",()=>{
+  const tch=users.filter(u=>u.role==="teacher").sort((a,b)=>feeOk(b)-feeOk(a)||(a.name||"").localeCompare(b.name||""));
+  const fp=pays.filter(p=>p.kind==="teacherFee").sort((a,b)=>(dt(b.createdAt)||0)-(dt(a.createdAt)||0));
+  const got=fp.reduce((a,p)=>a+ +p.amount,0);
+  return `<div class="g" style="margin-bottom:14px">${[["Teachers",tch.length],["Paid",tch.filter(feeOk).length],["Unpaid",tch.filter(u=>!feeOk(u)).length],["Fees collected",money(got,"KES")]].map(([a,b])=>`<div class="card"><small>${a}</small><h2>${b}</h2></div>`).join("")}</div>
+  <form class="form" id="fF"><label>One-time fee for new teachers (KES)<input id="fa" type="number" min="1" step="1" required value="${feeAmt||""}" placeholder="${feeAmt?"":"Not set here: the server uses its default"}"></label><button class="btn">Save fee amount</button></form>
+  <h3 class="sec">Teachers</h3>`+
+  (tch.length?tch.map(u=>`<div class="row"><div><strong>${esc(u.name)}</strong> <span class="pill">${feeOk(u)?(u.feeReceipt==="WAIVED"?"Waived":"Paid"):"Unpaid"}</span><small>${esc(u.email)}${feeOk(u)?" · paid "+fd(u.feePaidAt)+(u.feeReceipt&&u.feeReceipt!=="WAIVED"?" · receipt "+esc(u.feeReceipt):""):" · joined "+fd(u.createdAt)}</small></div>
+   <div class="acts">${feeOk(u)?bt("feerevoke",u.id,"Revoke access"):bt("feewaive",u.id,"Waive fee",false)}${bt("deluser",u.id,"Delete",true,'data-r="teacher"')}</div></div>`).join(""):empty("No teachers yet","Teachers appear here after they sign up."))+
+  `<h3 class="sec">Fee payments</h3>`+(fp.length?fp.slice(0,50).map(p=>`<div class="row"><div><strong>${money(p.amount,p.currency)}</strong> · ${esc(p.userName)}<small>${esc(p.method)} ${esc(p.reference||"")} · ${fd(p.createdAt)}</small></div></div>`).join(""):empty("No fee payments yet","Payments teachers make through M-Pesa appear here."))},
+ ()=>{$("fF").onsubmit=async e=>{e.preventDefault();const a=Math.round(+$("fa").value);
+   if(!(a>0))return flash("Enter a fee amount above 0.",false);
+   await setDoc(doc(db,"settings","teacherFee"),{amount:a,updatedAt:serverTimestamp()});
+   await refresh("Fee amount saved. It applies to the next payment.")}}],
 
 courses:["Courses and pricing",()=>{const c=courses.find(x=>x.id===editC)||{};
   return `<form class="form" id="cF">${plans.length?`<label>Pick a name from your lesson plans<select id="cnp"><option value="">Choose a name…</option>${nameOpts()}</select></label>`:""}
@@ -174,7 +207,7 @@ pay:["Subscriptions and payments",()=>{
   <label>Reference<input id="pr" placeholder="M-Pesa code, receipt no."></label><button class="btn">Enrol and record payment</button></form>
   <h3 class="sec">Enrolments</h3>`+(enr.length?[...enr].sort((a,b)=>(dt(b.startDate)||0)-(dt(a.startDate)||0)).map(e=>`<div class="row"><div><strong>${esc(e.userName)}</strong> <span class="pill">${esc(e.status)}</span><small>${esc(e.courseName)} · started ${fd(e.startDate)}${e.expiresAt?" · ends "+fd(e.expiresAt):""} · ${e.lessonsLeft} of ${e.lessonsTotal} lessons left</small></div>
    <div class="acts">${e.status==="active"?bt("enst",e.id,"Mark expired",true,'data-s="expired"')+bt("enst",e.id,"Cancel",true,'data-s="cancelled"'):bt("enst",e.id,"Reactivate",true,'data-s="active"')}</div></div>`).join(""):empty("No enrolments yet","Enrol your first student above."))+
-  `<h3 class="sec">Payments</h3>`+(pays.length?[...pays].sort((a,b)=>(dt(b.createdAt)||0)-(dt(a.createdAt)||0)).slice(0,30).map(p=>`<div class="row"><div><strong>${money(p.amount,p.currency)}</strong> · ${esc(p.userName)}<small>${esc(p.courseName)} · ${esc(p.method)} ${esc(p.reference||"")} · ${fd(p.createdAt)}</small></div></div>`).join(""):empty("No payments yet","Recorded payments appear here."))},
+  `<h3 class="sec">Student payments</h3>`+(()=>{const sp=pays.filter(p=>p.kind!=="teacherFee");return sp.length?[...sp].sort((a,b)=>(dt(b.createdAt)||0)-(dt(a.createdAt)||0)).slice(0,30).map(p=>`<div class="row"><div><strong>${money(p.amount,p.currency)}</strong> · ${esc(p.userName)}<small>${esc(p.courseName)} · ${esc(p.method)} ${esc(p.reference||"")} · ${fd(p.createdAt)}</small></div></div>`).join(""):empty("No payments yet","Recorded payments appear here. Teacher fees are under Teacher fees.")})()},
  ()=>{const fill=()=>{const c=courses.find(x=>x.id===$("pc").value);$("pa").value=c?($("pu").value==="USD"?c.usd:c.kes):""};
   $("pc").onchange=$("pu").onchange=fill;
   $("pF").onsubmit=async e=>{e.preventDefault();const s=users.find(u=>u.id===$("ps").value),c=courses.find(x=>x.id===$("pc").value);if(!s||!c)return;
@@ -287,8 +320,23 @@ async function bulkRun(ls,mode){
   const n=mode==="delete"?deleted:cancelled;
   return n+" lesson"+(n===1?"":"s")+(mode==="delete"?" deleted":" cancelled")+(refunded?". "+refunded+" returned to students":"")+(failed?". "+failed+" could not be done"+(first?": "+first.replace(/\.+$/,""):""):"")+".";
 }
+const FOREVER=()=>Timestamp.fromDate(new Date("2099-12-31T00:00:00Z"));
 const ACT={
  async role(b){const r=b.dataset.r;if(!confirm("Change this person to "+r+"?"))return;await updateDoc(doc(db,"users",b.dataset.id),{role:r});await refresh("Role changed to "+r+".")},
+ // Deletes the login and the person's data on the server. Payment records are kept.
+ async deluser(b){const u=users.find(x=>x.id===b.dataset.id);if(!u){b.disabled=false;return}
+   if(!SERVER_URL){flash("Deleting a person needs the server, which is not set up.",false);b.disabled=false;return}
+   const t=u.role==="teacher";
+   if(!confirm("Delete "+(u.name||u.email)+" ("+u.role+") permanently?\n\n"+(t?"• Their open time slots and public profile are removed.\n• They cannot be deleted while they have upcoming booked lessons: cancel those first on the Bookings page.\n":"• Their login, enrolments, progress notes and quiz attempts are removed.\n• Their upcoming booked lessons are cancelled.\n")+"• Payment records are kept.\n\nThis cannot be undone.")){b.disabled=false;return}
+   flash("Deleting… the server can take up to a minute to wake up. Please don't click again.");
+   const d=await deleteUserApi(u.id);
+   await refresh((u.name||"The account")+" was deleted."+(d.cancelled?" "+d.cancelled+" upcoming lesson"+(d.cancelled===1?"":"s")+" cancelled.":""))},
+ async feewaive(b){const u=users.find(x=>x.id===b.dataset.id);if(!u){b.disabled=false;return}
+   if(!confirm("Waive the service fee for "+(u.name||u.email)+"? They get full teacher access without paying.")){b.disabled=false;return}
+   await updateDoc(doc(db,"users",u.id),{feePaidUntil:FOREVER(),feePaidAt:serverTimestamp(),feeReceipt:"WAIVED"});await refresh("Fee waived for "+(u.name||u.email)+".")},
+ async feerevoke(b){const u=users.find(x=>x.id===b.dataset.id);if(!u){b.disabled=false;return}
+   if(!confirm("Revoke teacher access for "+(u.name||u.email)+"? They will be asked to pay the fee again. Lessons already booked stay.")){b.disabled=false;return}
+   await updateDoc(doc(db,"users",u.id),{feePaidUntil:deleteField(),feeReceipt:deleteField()});await refresh("Access revoked for "+(u.name||u.email)+".")},
  async editc(b){editC=b.dataset.id;show("courses")}, async canc(){editC="";show("courses")},
  async togc(b){const c=courses.find(x=>x.id===b.dataset.id);await updateDoc(doc(db,"courses",c.id),{active:c.active===false});await refresh()},
  async delc(b){if(confirm("Delete this course?")){await deleteDoc(doc(db,"courses",b.dataset.id));await refresh("Course deleted.")}},
