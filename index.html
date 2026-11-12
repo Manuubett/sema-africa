@@ -702,15 +702,24 @@ async function connect(){
   const {collection,getDocs,getDoc,doc,query,where}=FS;
   const rows=s=>s.docs.map(d=>({id:d.id,...d.data()}));
 
-  const [cs,ts,ps]=await Promise.allSettled([
-    getDocs(collection(db,"courses")),
-    getDocs(query(collection(db,"teacherProfiles"),where("published","==",true))),
-    getDocs(collection(db,"curriculum"))
-  ]);
+  // One read of the document the admin publishes. If it is missing, fall back to three reads.
+  let courses=null,teachers=null,plans=null;
+  try{const L=await fb.one("public","landing");
+    if(L&&Array.isArray(L.courses)){courses=L.courses;teachers=L.teachers||[];plans=L.plans||[]}}catch(e){}
+  if(!courses){
+    const [cs,ts,ps]=await Promise.allSettled([
+      getDocs(collection(db,"courses")),
+      getDocs(query(collection(db,"teacherProfiles"),where("published","==",true))),
+      getDocs(collection(db,"curriculum"))
+    ]);
+    if(cs.status==="fulfilled")courses=rows(cs.value);
+    if(ts.status==="fulfilled")teachers=rows(ts.value);
+    if(ps.status==="fulfilled")plans=rows(ps.value);
+  }
 
   // 1. Prices and plans from your courses
-  if(cs.status==="fulfilled"){
-    const courses=rows(cs.value).filter(c=>c.active!==false)
+  if(courses){
+    courses=courses.filter(c=>c.active!==false)
       .sort((a,b)=>(a.type==="Trial"?-1:0)-(b.type==="Trial"?-1:0)||(a.usd||0)-(b.usd||0));
     if(courses.length){
       const bestId=(courses.find(c=>c.type==="Monthly")||{}).id;
@@ -729,14 +738,14 @@ async function connect(){
   }
 
   // 2. Teachers who ticked "Show me on the website"
-  if(ts.status==="fulfilled"){
-    const t=rows(ts.value).filter(x=>x.name).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+  if(teachers){
+    const t=teachers.filter(x=>x.name).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
     if(t.length)document.getElementById("tgrid").innerHTML=t.map(teacherCard).join("");
   }
 
   // 3. The lesson outline from your Lesson plans
-  if(ps.status==="fulfilled"){
-    const p=rows(ps.value).filter(x=>x.active!==false&&(x.lessons||[]).length)
+  if(plans){
+    const p=plans.filter(x=>x.active!==false&&(x.lessons||[]).length)
       .sort((a,b)=>(a.courseNo||0)-(b.courseNo||0)||(a.topicNo||0)-(b.topicNo||0));
     if(p.length){document.getElementById("learnBody").innerHTML=learnHtml(p);
       document.getElementById("learn").hidden=false;document.getElementById("navLearn").hidden=false}
