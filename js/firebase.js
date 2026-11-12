@@ -63,6 +63,14 @@ export async function one(c, id, { fresh = false } = {}) {
   mem.set(k, { v, t: Date.now() });
   return v;
 }
+// For any other read (for example a query with where()). fn must return the data to keep.
+export async function cached(key, fn, { fresh = false } = {}) {
+  const k = "x:" + key, m = mem.get(k);
+  if (m && !fresh && Date.now() - m.t < TTL) return m.v;
+  const v = await retry(fn);
+  mem.set(k, { v, t: Date.now() });
+  return v;
+}
 export const clearCache = () => mem.clear();
 
 // Your Cloudflare Worker (file uploads and downloads).
