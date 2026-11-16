@@ -63,16 +63,28 @@ async function notifyLessons(ids,note){
     return d.sent+" reminder"+(d.sent===1?"":"s")+" sent"+(sk.length?". Skipped "+sk.length+": "+[...new Set(sk.map(x=>x.reason))].join("; "):"")+".";
   }catch(e){if(e.name==="AbortError")throw new Error("The server took too long to answer. Wait a minute, then try again.");throw e}finally{clearTimeout(t)}
 }
+// The admin emails teachers. The server looks up each address, so emails never reach the browser's request.
+async function broadcastApi(userIds,subject,message){
+  const c=new AbortController(),t=setTimeout(()=>c.abort(),75000);
+  try{
+    const r=await fetch(SERVER_URL+"/api/admin/broadcast",{method:"POST",signal:c.signal,headers:{"Content-Type":"application/json",Authorization:"Bearer "+await auth.currentUser.getIdToken()},body:JSON.stringify({userIds,subject,message})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.error||"Could not send");
+    return d;
+  }catch(e){if(e.name==="AbortError")throw new Error("The server took too long to answer. Wait a minute, then check Sent messages before trying again.");throw e}finally{clearTimeout(t)}
+}
 const $=id=>document.getElementById(id), view=$("view");
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const dt=v=>v&&v.toDate?v.toDate():null, fd=v=>{const d=dt(v);return d?d.toLocaleDateString([],{day:"numeric",month:"short",year:"numeric"}):"–"};
 const money=(a,c)=>(c==="KES"?"KES ":"$")+Number(a||0).toLocaleString();
 const empty=(t,p)=>`<div class="empty"><strong>${t}</strong><p>${p}</p></div>`;
 const bt=(a,id,t,line=true,x="")=>`<button class="btn sm ${line?"line":""}" data-act="${a}" data-id="${id}" ${x}>${t}</button>`;
-let uid,users=[],courses=[],enr=[],pays=[],lessons=[],codes=[],quizzes=[],attempts=[],qErr=false,cur="overview",editC="",repCur="USD",plans=[],plErr=false,editP="",selB=new Set(),remOff=[1440,60],remErr=false,feeAmt=0;
+let uid,users=[],courses=[],enr=[],pays=[],lessons=[],codes=[],quizzes=[],attempts=[],qErr=false,cur="overview",editC="",repCur="USD",plans=[],plErr=false,editP="",selB=new Set(),remOff=[1440,60],remErr=false,feeAmt=0,season={open:true,message:""},msgs=[];
 const students=()=>users.filter(u=>u.role==="student");
 // A teacher has paid (or been waived) when feePaidUntil is in the future
 const feeOk=u=>{const d=dt(u.feePaidUntil);return !!d&&d>new Date()};
+// Which teachers an email goes to: all, approved, paid but waiting for approval, or unpaid
+const grp=(g,u)=>g==="approved"?u.approved===true:g==="pending"?feeOk(u)&&!u.approved:g==="unpaid"?!feeOk(u):true;
 function flash(t,ok=true){$("flash").className="msg "+(ok?"ok":"err");$("flash").textContent=t}
 async function load(){
   const all=c=>getDocs(collection(db,c)).then(s=>s.docs.map(d=>({id:d.id,...d.data()})));
@@ -85,13 +97,20 @@ async function load(){
   remErr=false;try{const s=await getDoc(doc(db,"settings","reminders"));remOff=s.exists()&&Array.isArray(s.data().offsets)?s.data().offsets:[1440,60]}catch{remOff=[1440,60];remErr=true}
   // Teacher fee amount (0 means "not set here", so the server uses TEACHER_FEE_KES or 1000)
   try{const s=await getDoc(doc(db,"settings","teacherFee"));feeAmt=s.exists()?Number(s.data().amount)||0:0}catch{feeAmt=0}
+  // Season control: when closed, teachers cannot add new lesson slots
+  try{const s=await getDoc(doc(db,"settings","season"));season=s.exists()?{open:true,message:"",...s.data()}:{open:true,message:""}}catch{season={open:true,message:""}}
+  // Messages sent to teachers (safe, so the page works before the rule is published)
+  try{msgs=await all("adminMessages")}catch{msgs=[]}
   const ms=x=>(x&&x.toMillis)?x.toMillis():0;
   quizzes.sort((a,b)=>ms(b.createdAt)-ms(a.createdAt));
   attempts.sort((a,b)=>ms(b.date)-ms(a.date));
+  msgs.sort((a,b)=>ms(b.sentAt)-ms(a.sentAt));
 }
 // Builds the single public/landing document the home page reads (1 read per visitor instead of 3)
 async function publishLanding(){
-  const ts=(await getDocs(query(collection(db,"teacherProfiles"),where("published","==",true)))).docs.map(d=>({id:d.id,...d.data()}));
+  // Only approved teachers appear on the website
+  const okIds=new Set(users.filter(u=>u.role==="teacher"&&u.approved===true).map(u=>u.id));
+  const ts=(await getDocs(query(collection(db,"teacherProfiles"),where("published","==",true)))).docs.map(d=>({id:d.id,...d.data()})).filter(t=>okIds.has(t.id));
   const pick=(o,keys)=>{const r={};keys.forEach(k=>{if(o[k]!==undefined&&o[k]!==null)r[k]=o[k]});return r};
   const data={
     courses:courses.filter(c=>c.active!==false).map(c=>pick(c,["id","name","type","lessons","minutes","usd","kes","active"])),
@@ -103,9 +122,9 @@ async function publishLanding(){
   await setDoc(doc(db,"public","landing"),{...data,updatedAt:serverTimestamp()});
   return data;
 }
-// After saving on Courses or Lesson plans, the website data is republished automatically
+// After saving on Courses, Lesson plans or Teacher fees (approvals), the website data is republished automatically
 async function refresh(m){await load();let w="";
-  if(cur==="courses"||cur==="plans"){try{await publishLanding()}catch(e){w=" Website data was not updated: "+(e.code||e.message)}}
+  if(cur==="courses"||cur==="plans"||cur==="teacherfees"){try{await publishLanding()}catch(e){w=" Website data was not updated: "+(e.code||e.message)}}
   show(cur);if(m||w)flash((m||"")+w)}
 
 // ── Lesson plans: reading a topic document ──
@@ -133,30 +152,71 @@ overview:["Overview",()=>{
   const rev=["USD","KES"].map(c=>money(mp.filter(p=>p.currency===c).reduce((a,p)=>a+ +p.amount,0),c)).join(" + ");
   const up=lessons.filter(l=>["open","booked"].includes(l.status)&&dt(l.start)>now).length;
   const tch=users.filter(u=>u.role==="teacher");
-  return `<div class="g">${[["Students",students().length],["Teachers",tch.length],["Teachers who paid the fee",tch.filter(feeOk).length],["Active enrolments",enr.filter(e=>e.status==="active").length],["Upcoming lessons",up],["Revenue this month",rev]].map(([a,b])=>`<div class="card"><small>${a}</small><h2>${b}</h2></div>`).join("")}</div>`}],
+  return `<div class="g">${[["Students",students().length],["Teachers",tch.length],["Teachers who paid the fee",tch.filter(feeOk).length],["Teachers awaiting approval",tch.filter(u=>feeOk(u)&&u.payoutPhone&&!u.approved).length],["Approved teachers",tch.filter(u=>u.approved).length],["Scheduling",season.open!==false?"Open":"Closed"],["Active enrolments",enr.filter(e=>e.status==="active").length],["Upcoming lessons",up],["Revenue this month",rev]].map(([a,b])=>`<div class="card"><small>${a}</small><h2>${b}</h2></div>`).join("")}</div>`}],
 
 users:["Students and teachers",()=>`<div class="form"><label>Search<input id="q" placeholder="Name or email"></label><label>Show<select id="rf"><option value="">Everyone</option><option value="student">Students</option><option value="teacher">Teachers</option><option value="admin">Admins</option></select></label></div><div id="ul"></div>`,
  ()=>{const rb=(id,r,t)=>`<button class="btn sm line" data-act="role" data-id="${id}" data-r="${r}">${t}</button>`;
   const draw=()=>{const q=$("q").value.toLowerCase(),f=$("rf").value;
    const l=users.filter(u=>(!f||u.role===f)&&((u.name||"")+(u.email||"")).toLowerCase().includes(q));
-   $("ul").innerHTML=l.length?l.map(u=>`<div class="row"><div><strong>${esc(u.name)}</strong> <span class="pill">${esc(u.role)}</span>${u.role==="teacher"?` <span class="pill">${feeOk(u)?"Fee paid":"Fee unpaid"}</span>`:""}<small>${esc(u.email)} · ${esc(u.goal||"")} · joined ${fd(u.createdAt)}</small></div>
+   $("ul").innerHTML=l.length?l.map(u=>`<div class="row"><div><strong>${esc(u.name)}</strong> <span class="pill">${esc(u.role)}</span>${u.role==="teacher"?` <span class="pill">${feeOk(u)?"Fee paid":"Fee unpaid"}</span> <span class="pill">${u.approved?"Approved":"Not approved"}</span>`:""}<small>${esc(u.email)} · ${esc(u.goal||"")} · joined ${fd(u.createdAt)}</small></div>
     <div class="acts">${u.id===uid?"<small>You</small>":(u.role==="student"?rb(u.id,"teacher","Make teacher"):u.role==="teacher"?rb(u.id,"student","Make student"):"")+(u.role!=="admin"?bt("deluser",u.id,"Delete",true,'data-r="'+esc(u.role)+'"'):"")}</div></div>`).join(""):empty("No one found","Try another search.")};
   $("q").oninput=draw;$("rf").onchange=draw;draw()}],
 
-teacherfees:["Teacher fees",()=>{
+teacherfees:["Teacher fees and approval",()=>{
   const tch=users.filter(u=>u.role==="teacher").sort((a,b)=>feeOk(b)-feeOk(a)||(a.name||"").localeCompare(b.name||""));
   const fp=pays.filter(p=>p.kind==="teacherFee").sort((a,b)=>(dt(b.createdAt)||0)-(dt(a.createdAt)||0));
   const got=fp.reduce((a,p)=>a+ +p.amount,0);
-  return `<div class="g" style="margin-bottom:14px">${[["Teachers",tch.length],["Paid",tch.filter(feeOk).length],["Unpaid",tch.filter(u=>!feeOk(u)).length],["Fees collected",money(got,"KES")]].map(([a,b])=>`<div class="card"><small>${a}</small><h2>${b}</h2></div>`).join("")}</div>
+  return `<div class="g" style="margin-bottom:14px">${[["Teachers",tch.length],["Paid",tch.filter(feeOk).length],["Unpaid",tch.filter(u=>!feeOk(u)).length],["Awaiting approval",tch.filter(u=>feeOk(u)&&u.payoutPhone&&!u.approved).length],["Approved",tch.filter(u=>u.approved).length],["Fees collected",money(got,"KES")]].map(([a,b])=>`<div class="card"><small>${a}</small><h2>${b}</h2></div>`).join("")}</div>
   <form class="form" id="fF"><label>One-time fee for new teachers (KES)<input id="fa" type="number" min="1" step="1" required value="${feeAmt||""}" placeholder="${feeAmt?"":"Not set here: the server uses its default"}"></label><button class="btn">Save fee amount</button></form>
   <h3 class="sec">Teachers</h3>`+
-  (tch.length?tch.map(u=>`<div class="row"><div><strong>${esc(u.name)}</strong> <span class="pill">${feeOk(u)?(u.feeReceipt==="WAIVED"?"Waived":"Paid"):"Unpaid"}</span><small>${esc(u.email)}${feeOk(u)?" · paid "+fd(u.feePaidAt)+(u.feeReceipt&&u.feeReceipt!=="WAIVED"?" · receipt "+esc(u.feeReceipt):""):" · joined "+fd(u.createdAt)}</small></div>
-   <div class="acts">${feeOk(u)?bt("feerevoke",u.id,"Revoke access"):bt("feewaive",u.id,"Waive fee",false)}${bt("deluser",u.id,"Delete",true,'data-r="teacher"')}</div></div>`).join(""):empty("No teachers yet","Teachers appear here after they sign up."))+
+  (tch.length?tch.map(u=>`<div class="row"><div><strong>${esc(u.name)}</strong> <span class="pill">${feeOk(u)?(u.feeReceipt==="WAIVED"?"Waived":"Paid"):"Unpaid"}</span> <span class="pill">${u.approved?"Approved":"Not approved"}</span>
+   <small>${esc(u.email)}${feeOk(u)?" · paid "+fd(u.feePaidAt)+(u.feeReceipt&&u.feeReceipt!=="WAIVED"?" · receipt "+esc(u.feeReceipt):""):" · joined "+fd(u.createdAt)}<br>${u.payoutPhone?"M-Pesa <strong>"+esc(u.payoutPhone)+"</strong> · name <strong>"+esc(u.payoutName)+"</strong> · sent "+fd(u.payoutSubmittedAt):"M-Pesa details not sent yet"}</small></div>
+   <div class="acts">${feeOk(u)&&u.payoutPhone&&!u.approved?bt("approve",u.id,"Approve",false):""}${u.approved?bt("unapprove",u.id,"Remove approval"):""}${feeOk(u)?bt("feerevoke",u.id,"Revoke access"):bt("feewaive",u.id,"Waive fee",false)}${bt("deluser",u.id,"Delete",true,'data-r="teacher"')}</div></div>`).join(""):empty("No teachers yet","Teachers appear here after they sign up."))+
   `<h3 class="sec">Fee payments</h3>`+(fp.length?fp.slice(0,50).map(p=>`<div class="row"><div><strong>${money(p.amount,p.currency)}</strong> · ${esc(p.userName)}<small>${esc(p.method)} ${esc(p.reference||"")} · ${fd(p.createdAt)}</small></div></div>`).join(""):empty("No fee payments yet","Payments teachers make through M-Pesa appear here."))},
  ()=>{$("fF").onsubmit=async e=>{e.preventDefault();const a=Math.round(+$("fa").value);
    if(!(a>0))return flash("Enter a fee amount above 0.",false);
    await setDoc(doc(db,"settings","teacherFee"),{amount:a,updatedAt:serverTimestamp()});
    await refresh("Fee amount saved. It applies to the next payment.")}}],
+
+season:["Season control",()=>{
+  const open=season.open!==false,fut=lessons.filter(l=>l.status==="open"&&dt(l.start)>new Date()).length;
+  return `<div class="g" style="margin-bottom:14px">${[["Scheduling",open?"Open":"Closed"],["Active enrolments",enr.filter(e=>e.status==="active").length],["Approved teachers",users.filter(u=>u.role==="teacher"&&u.approved).length],["Future open slots",fut]].map(([a,b])=>`<div class="card"><small>${a}</small><h2>${b}</h2></div>`).join("")}</div>
+  <p>When scheduling is closed, approved teachers cannot add new lesson slots. Lessons already booked are not changed. Close it when you have no active students, and open it again when the season starts.</p>
+  <form class="form" id="seF"><label class="chk"><input type="checkbox" id="seO" ${open?"checked":""}> Teachers can add and schedule lessons</label>
+  <label class="full">Message teachers see when it is closed<input id="seM" maxlength="160" value="${esc(season.message||"")}" placeholder="e.g. No classes this season. We will email you when bookings open."></label>
+  <button class="btn">Save</button></form>
+  <h3 class="sec">Clean up</h3>
+  <div class="row"><div><strong>Cancel all future open slots</strong><small>Removes ${fut} open slot${fut===1?"":"s"} that nobody has booked. Booked lessons are not touched.</small></div><div class="acts">${bt("clearopen","","Cancel open slots")}</div></div>`},
+ ()=>{$("seF").onsubmit=async e=>{e.preventDefault();
+   await setDoc(doc(db,"settings","season"),{open:$("seO").checked,message:$("seM").value.trim(),updatedAt:serverTimestamp()});
+   await refresh($("seO").checked?"Scheduling is open.":"Scheduling is closed. Teachers cannot add new slots.")}}],
+
+comms:["Communication",()=>{
+  const tch=users.filter(u=>u.role==="teacher").sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  return `<p>Email teachers from here. Tick people below to send to them only, or choose a group.</p>
+  <form class="form" id="cmF"><label>Send to<select id="cg"><option value="all">All teachers</option><option value="approved">Approved teachers</option><option value="pending">Paid, waiting for approval</option><option value="unpaid">Teachers who have not paid</option></select></label>
+  <label class="full">Subject<input id="cs" required maxlength="120"></label>
+  <label class="full">Message<textarea id="cb" rows="7" required maxlength="3000" placeholder="Each teacher gets this with their name at the top."></textarea></label>
+  <p class="full"><small id="cc"></small></p><button class="btn">Send email</button></form>
+  <h3 class="sec">Or choose people</h3>
+  <div id="cl">${tch.length?tch.map(u=>`<label class="chk" style="display:block;margin:6px 0"><input type="checkbox" data-c="${u.id}"> ${esc(u.name)} <small>${esc(u.email)} · ${u.approved?"Approved":feeOk(u)?"Awaiting approval":"Unpaid"}</small></label>`).join(""):empty("No teachers yet","Teachers appear here after they sign up.")}</div>
+  <h3 class="sec">Sent messages</h3>`+
+  (msgs.length?msgs.slice(0,20).map(m=>`<div class="row"><div><strong>${esc(m.subject)}</strong><small>${fd(m.sentAt)} · sent to ${m.count||0}${m.failed?" · "+m.failed+" failed":""}<br>${esc(String(m.message||"").slice(0,160))}</small></div></div>`).join(""):empty("Nothing sent yet","Messages you send appear here."))},
+ ()=>{
+  const ticked=()=>[...document.querySelectorAll("#cl [data-c]:checked")].map(x=>x.dataset.c);
+  const ids=()=>{const t=ticked();return t.length?t:users.filter(u=>u.role==="teacher"&&u.email&&grp($("cg").value,u)).map(u=>u.id)};
+  const upd=()=>{const n=ids().length,t=ticked().length;$("cg").disabled=!!t;$("cc").textContent=n+" teacher"+(n===1?"":"s")+(t?" you ticked":" in this group")+" will get this email."};
+  $("cg").onchange=upd;$("cl").onchange=upd;upd();
+  $("cmF").onsubmit=async e=>{e.preventDefault();const to=ids(),sb=$("cs").value.trim(),ms=$("cb").value.trim(),bn=$("cmF").querySelector("button");
+   if(!to.length)return flash("There is no one to send to.",false);
+   if(!SERVER_URL)return flash("The server is not set up.",false);
+   if(!confirm("Send this email to "+to.length+" teacher"+(to.length>1?"s":"")+"?"))return;
+   bn.disabled=true;
+   try{flash("Sending… the server can take up to a minute to wake up. Please don't click again.");
+    const d=await broadcastApi(to,sb,ms);
+    try{await addDoc(collection(db,"adminMessages"),{subject:sb,message:ms,count:d.sent,failed:d.failed||0,sentBy:uid,sentAt:serverTimestamp()})}catch{}
+    await refresh("Sent to "+d.sent+" teacher"+(d.sent===1?"":"s")+(d.failed?". "+d.failed+" failed.":"."))}
+   catch(x){flash(x.message||"Could not send",false);bn.disabled=false}}}],
 
 courses:["Courses and pricing",()=>{const c=courses.find(x=>x.id===editC)||{};
   return `<form class="form" id="cF">${plans.length?`<label>Pick a name from your lesson plans<select id="cnp"><option value="">Choose a name…</option>${nameOpts()}</select></label>`:""}
@@ -224,7 +284,7 @@ pay:["Subscriptions and payments",()=>{
   <label>Reference<input id="pr" placeholder="M-Pesa code, receipt no."></label><button class="btn">Enrol and record payment</button></form>
   <h3 class="sec">Enrolments</h3>`+(enr.length?[...enr].sort((a,b)=>(dt(b.startDate)||0)-(dt(a.startDate)||0)).map(e=>`<div class="row"><div><strong>${esc(e.userName)}</strong> <span class="pill">${esc(e.status)}</span><small>${esc(e.courseName)} · started ${fd(e.startDate)}${e.expiresAt?" · ends "+fd(e.expiresAt):""} · ${e.lessonsLeft} of ${e.lessonsTotal} lessons left</small></div>
    <div class="acts">${e.status==="active"?bt("enst",e.id,"Mark expired",true,'data-s="expired"')+bt("enst",e.id,"Cancel",true,'data-s="cancelled"'):bt("enst",e.id,"Reactivate",true,'data-s="active"')}</div></div>`).join(""):empty("No enrolments yet","Enrol your first student above."))+
-  `<h3 class="sec">Student payments</h3>`+(()=>{const sp=pays.filter(p=>p.kind!=="teacherFee");return sp.length?[...sp].sort((a,b)=>(dt(b.createdAt)||0)-(dt(a.createdAt)||0)).slice(0,30).map(p=>`<div class="row"><div><strong>${money(p.amount,p.currency)}</strong> · ${esc(p.userName)}<small>${esc(p.courseName)} · ${esc(p.method)} ${esc(p.reference||"")} · ${fd(p.createdAt)}</small></div></div>`).join(""):empty("No payments yet","Recorded payments appear here. Teacher fees are under Teacher fees.")})()},
+  `<h3 class="sec">Student payments</h3>`+(()=>{const sp=pays.filter(p=>p.kind!=="teacherFee");return sp.length?[...sp].sort((a,b)=>(dt(b.createdAt)||0)-(dt(a.createdAt)||0)).slice(0,30).map(p=>`<div class="row"><div><strong>${money(p.amount,p.currency)}</strong> · ${esc(p.userName)}<small>${esc(p.courseName)} · ${esc(p.method)} ${esc(p.reference||"")} · ${fd(p.createdAt)}</small></div></div>`).join(""):empty("No payments yet","Recorded payments appear here. Teacher fees are under Teacher fees and approval.")})()},
  ()=>{const fill=()=>{const c=courses.find(x=>x.id===$("pc").value);$("pa").value=c?($("pu").value==="USD"?c.usd:c.kes):""};
   $("pc").onchange=$("pu").onchange=fill;
   $("pF").onsubmit=async e=>{e.preventDefault();const s=users.find(u=>u.id===$("ps").value),c=courses.find(x=>x.id===$("pc").value);if(!s||!c)return;
@@ -270,7 +330,7 @@ remsettings:["Reminder settings",()=>{
    await setDoc(doc(db,"settings","reminders"),{offsets:offs,updatedAt:serverTimestamp()});
    await refresh("Reminder times saved.")}}],
 
-website:["Website data",()=>`<p>The public home page reads one document with your courses, published teachers and lesson plans. It updates automatically when you save a course or a lesson plan. Press the button after a teacher changes their profile, or the first time you set this up.</p><div class="acts"><button class="btn" data-act="pubsite">Publish website data now</button></div>`],
+website:["Website data",()=>`<p>The public home page reads one document with your courses, published teachers and lesson plans. Only approved teachers are shown. It updates automatically when you save a course, a lesson plan, or a teacher approval. Press the button after a teacher changes their profile, or the first time you set this up.</p><div class="acts"><button class="btn" data-act="pubsite">Publish website data now</button></div>`],
 
 quizzes:["Quiz results",()=>{
   const tot=attempts.length,avg=tot?Math.round(attempts.reduce((a,x)=>a+(x.total?x.score/x.total:0),0)/tot*100):0;
@@ -357,6 +417,22 @@ const ACT={
  async feerevoke(b){const u=users.find(x=>x.id===b.dataset.id);if(!u){b.disabled=false;return}
    if(!confirm("Revoke teacher access for "+(u.name||u.email)+"? They will be asked to pay the fee again. Lessons already booked stay.")){b.disabled=false;return}
    await updateDoc(doc(db,"users",u.id),{feePaidUntil:deleteField(),feeReceipt:deleteField()});await refresh("Access revoked for "+(u.name||u.email)+".")},
+ // Approval unlocks the timetable, lessons, quizzes and the public profile for a teacher
+ async approve(b){const u=users.find(x=>x.id===b.dataset.id);if(!u){b.disabled=false;return}
+   if(!confirm("Approve "+(u.name||u.email)+"? They can then schedule lessons and set up a public profile.")){b.disabled=false;return}
+   await updateDoc(doc(db,"users",u.id),{approved:true,approvedAt:serverTimestamp()});
+   let note="";
+   if(SERVER_URL){try{await broadcastApi([u.id],"Your SemaAfrica teacher account is approved","Your account has been approved. You can now add lesson times, set up your profile and start teaching. Log in to get started.")}catch{note=" The approval email could not be sent."}}
+   await refresh((u.name||u.email)+" is approved."+note)},
+ async unapprove(b){const u=users.find(x=>x.id===b.dataset.id);if(!u){b.disabled=false;return}
+   if(!confirm("Remove approval for "+(u.name||u.email)+"? They lose access to the timetable and their profile leaves the website. Lessons already booked stay.")){b.disabled=false;return}
+   await updateDoc(doc(db,"users",u.id),{approved:false});
+   try{await updateDoc(doc(db,"teacherProfiles",u.id),{published:false})}catch{}
+   await refresh("Approval removed.")},
+ async clearopen(b){const ls=lessons.filter(l=>l.status==="open"&&dt(l.start)>new Date());
+   if(!ls.length){flash("There are no future open slots.",false);b.disabled=false;return}
+   if(!confirm("Cancel "+ls.length+" open slot"+(ls.length>1?"s":"")+"? Booked lessons are not touched.")){b.disabled=false;return}
+   await refresh(await bulkRun(ls,"cancel"))},
  async editc(b){editC=b.dataset.id;show("courses")}, async canc(){editC="";show("courses")},
  async togc(b){const c=courses.find(x=>x.id===b.dataset.id);await updateDoc(doc(db,"courses",c.id),{active:c.active===false});await refresh()},
  async delc(b){if(confirm("Delete this course?")){await deleteDoc(doc(db,"courses",b.dataset.id));await refresh("Course deleted.")}},
