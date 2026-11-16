@@ -220,10 +220,14 @@ module.exports = (admin) => {
       const due = [];
       (await db.collection('users').where('role', '==', 'teacher').get()).docs.forEach(d => {
         const t = d.data();
+        if (t.morningEmail === false || !t.email) return;  
         if (t.morningEmail === false || !t.email) return;           // switched off, or no address
+if (t.approved !== true) return;                            // only approved teachers get the summary
+        // switched off, or no address
         const tz = okTz(t.tz) ? t.tz : DEFAULT_TZ, hr = dayOf(now, tz).hour;
         if (hr >= MORNING_HOUR && hr < MORNING_HOUR + 3) due.push({ id: d.id, ...t });
       });
+      
       out.teachers = due.length;
       if (!due.length) return out;
       const { by, links } = await digestData(now);
