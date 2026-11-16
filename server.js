@@ -61,6 +61,7 @@ function limit(max) {
 
 app.use('/api/payments', limit(60), require('./routes/payments')(admin));
 app.use('/api/lessons', require('./routes/lessons')(admin));
+app.use('/api/admin/broadcast', limit(10), require('./routes/broadcast')(admin));
 app.use('/api/admin', limit(30), require('./routes/admin')(admin));   // admin-only actions, such as deleting a person
 const reminders = require('./routes/reminders')(admin);
 app.use('/api/reminders', reminders);
