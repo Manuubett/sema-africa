@@ -28,7 +28,10 @@ function loadCredential() {
 admin.initializeApp({ credential: loadCredential() });
 console.log('Firebase project:', PROJECT_ID, PROJECT_ID === 'semiafrica' ? '' : '  <-- WARNING: SemaAfrica logins belong to the "semiafrica" project, so payments will fail with "log in again"');
 
-if (process.env.PAYMENTS_MODE === 'live') require('./providers/daraja').assertConfigured();   // stop at start-up if a setting is missing
+if (process.env.PAYMENTS_MODE === 'live') {
+  require('./providers/daraja').assertConfigured();     // stop at start-up if an M-Pesa setting is missing
+  require('./providers/intasend').assertConfigured();   // same for IntaSend
+}
 
 const app = express();
 app.disable('x-powered-by');
