@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const getProvider = require('../providers');
+const intasend = require('../providers/intasend');
 
 
 module.exports = (admin) => {
@@ -26,23 +27,24 @@ module.exports = (admin) => {
     return /^254[17]\d{8}$/.test(d) ? d : null;
   }
 
-  // Price always comes from Firestore, never from the browser
-  async function priceFor(courseId, code) {
+  // Price always comes from Firestore, never from the browser. USD amounts keep cents.
+  async function priceFor(courseId, code, currency = 'KES') {
     const cs = await db.collection('courses').doc(String(courseId)).get();
     if (!cs.exists || cs.data().active === false) throw httpErr('That plan is not available', 400);
-    const c = cs.data();
+    const c = cs.data(), usd = currency === 'USD';
     if (c.type === 'Trial' && !(Number(c.kes) > 0)) throw httpErr('This trial lesson is free. No payment is needed.', 400);
-    let amount = Number(c.kes), discount = 0, codeDoc = null;
+    let amount = Number(usd ? c.usd : c.kes), discount = 0, codeDoc = null;
+    if (!(amount > 0)) throw httpErr('That plan has no price in ' + currency, 400);
     if (code) {
       const id = String(code).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
       const ks = await db.collection('discountCodes').doc(id).get();
       const k = ks.exists ? ks.data() : null;
       const ok = k && k.active && (!k.expires || k.expires.toDate() > new Date()) && (!k.maxUses || (k.usedCount || 0) < k.maxUses);
       if (!ok) throw httpErr('That discount code is not valid', 400);
-      // Fixed discounts are in USD, so convert with the plan's own USD:KES ratio
-      discount = k.type === 'percent' ? amount * k.value / 100 : (c.usd ? k.value * (c.kes / c.usd) : 0);
-      discount = Math.min(Math.round(discount), amount);
-      amount -= discount; codeDoc = id;
+      discount = k.type === 'percent' ? amount * k.value / 100 : (usd ? k.value : (c.usd ? k.value * (c.kes / c.usd) : 0));
+      discount = usd ? Math.min(Math.round(discount * 100) / 100, amount) : Math.min(Math.round(discount), amount);
+      amount = usd ? Math.round((amount - discount) * 100) / 100 : amount - discount;
+      codeDoc = id;
     }
     return { course: c, amount, discount, code: codeDoc };
   }
@@ -66,7 +68,8 @@ module.exports = (admin) => {
       const p = snap.data();
       if (p.status !== 'pending') return p.status;                       // already handled
       if (!result.success) { tx.update(pref, { status: 'failed', reason: result.reason || '', settledAt: FieldValue.serverTimestamp() }); return 'failed'; }
-      if (result.amount != null && Number(result.amount) < p.amount) {   // paid less than the price
+      if ((result.amount != null && Number(result.amount) < p.amount)    // paid less than the price, or in the wrong currency
+          || (result.currency && result.currency !== (p.currency || 'KES'))) {
         tx.update(pref, { status: 'amount_mismatch', paidAmount: Number(result.amount), settledAt: FieldValue.serverTimestamp() }); return 'amount_mismatch';
       }
       if (p.kind === 'teacherFee') {
@@ -93,7 +96,7 @@ module.exports = (admin) => {
       });
       tx.set(db.collection('payments').doc(), {
         userId: p.uid, userName: p.userName, courseId: p.courseId, courseName: c.name,
-        amount: p.amount, currency: 'KES', method: 'M-Pesa', reference: result.receipt || p.reference,
+        amount: p.amount, currency: p.currency || 'KES', method: p.method || 'M-Pesa', reference: result.receipt || p.reference,
         discountCode: p.code || '', createdAt: FieldValue.serverTimestamp(),
       });
       if (ks && ks.exists) tx.update(kref, { usedCount: FieldValue.increment(1) });
@@ -102,10 +105,25 @@ module.exports = (admin) => {
     });
   }
 
-  // ── verifying with Safaricom ───────────────────────────────────────────
+  // ── verifying with the payment providers ───────────────────────────────
   const lastQuery = new Map();
-  // Ask the provider whether this prompt really succeeded (the callback alone is never trusted)
+
+  // Card: ask IntaSend whether the invoice really succeeded (the webhook alone is never trusted)
+  async function verifyCard(pendingId, p, force) {
+    if (p.status !== 'pending' || !p.invoiceId) return p.status;
+    const now = Date.now();
+    if (!force && now - (lastQuery.get(pendingId) || 0) < 8000) return 'pending';
+    lastQuery.set(pendingId, now);
+    const v = await getProvider.card().queryInvoice(p.invoiceId);
+    if (v.apiRef !== p.reference) return 'pending';      // an invoice that is not ours is never credited
+    if (v.state === 'paid') return settle(pendingId, { success: true, amount: v.value, currency: v.currency, receipt: p.invoiceId });
+    if (v.state === 'failed') return settle(pendingId, { success: false, reason: v.reason });
+    return 'pending';
+  }
+
+  // M-Pesa: ask the provider whether this prompt really succeeded (the callback alone is never trusted)
   async function verify(pendingId, p, cb, force) {
+    if (p.provider === 'intasend') return verifyCard(pendingId, p, force);
     if (p.status !== 'pending' || !p.checkoutId) return p.status;
     const now = Date.now();
     if (!force && now - (lastQuery.get(pendingId) || 0) < 8000) return 'pending';
@@ -166,10 +184,14 @@ module.exports = (admin) => {
     }
   });
 
-  // Show the price (with any code) before the student pays
+  // Show the price (with any code) before the student pays, in KES and USD
   r.post('/quote', requireUser, async (req, res) => {
-    try { const q = await priceFor(req.body.courseId, req.body.code); res.json({ amount: q.amount, discount: q.discount, currency: 'KES' }); }
-    catch (e) { fail(res, e); }
+    try {
+      const q = await priceFor(req.body.courseId, req.body.code);
+      let usd = null;
+      try { const u = await priceFor(req.body.courseId, req.body.code, 'USD'); usd = { amount: u.amount, discount: u.discount }; } catch {}
+      res.json({ amount: q.amount, discount: q.discount, currency: 'KES', usd });
+    } catch (e) { fail(res, e); }
   });
 
   // Trial plans need no payment. Each student can claim each trial once:
@@ -233,7 +255,7 @@ module.exports = (admin) => {
       .catch(e => console.error('[callback]', e.message));
   });
 
-  // The browser polls this. If the callback never arrived, it asks Safaricom directly after 15 seconds.
+  // The browser polls this. If the callback never arrived, it asks the provider directly after 15 seconds.
   r.get('/status/:id', requireUser, async (req, res) => {
     try {
       const ref = db.collection('payments_pending').doc(req.params.id), s = await ref.get();
@@ -266,6 +288,52 @@ module.exports = (admin) => {
     const s = await db.collection('payments_pending').doc(req.params.id).get();
     if (!s.exists || s.data().uid !== req.uid) return res.status(404).json({ error: 'Not found' });
     res.json({ status: await settle(s.id, { success: true, receipt: 'TEST' + Date.now() }) });
+  });
+
+  // Card payment: save a pending record, create the IntaSend checkout page, return its URL
+  r.post('/card/initiate', requireUser, async (req, res) => {
+    let pref;
+    try {
+      if (tooMany(req.uid)) throw httpErr('Please wait a few minutes and try again', 429);
+      const q = await priceFor(req.body.courseId, req.body.code, 'USD');
+      if (q.course.type === 'Trial') {
+        const had = await db.collection('enrollments').where('userId', '==', req.uid).where('courseId', '==', String(req.body.courseId)).limit(1).get();
+        if (!had.empty) throw httpErr('You have already had your trial lesson', 400);
+      }
+      if (!(q.amount >= 1)) throw httpErr('That price cannot be charged by card', 400);
+      const us = await db.collection('users').doc(req.uid).get(), u = us.exists ? us.data() : {};
+      const email = u.email || (await admin.auth().getUser(req.uid)).email;
+      const reference = 'SEMA-C' + crypto.randomBytes(5).toString('hex').toUpperCase();
+      pref = db.collection('payments_pending').doc();
+      await pref.set({ uid: req.uid, userName: u.name || '', courseId: String(req.body.courseId), amount: q.amount,
+        currency: 'USD', method: 'Card', provider: 'intasend', code: q.code || '', reference,
+        status: 'pending', createdAtMs: Date.now(), createdAt: FieldValue.serverTimestamp() });
+      const out = await getProvider.card().createCheckout({ amount: q.amount, currency: 'USD', email, name: u.name, reference,
+        redirectUrl: (process.env.APP_URL || '').replace(/\/+$/, '') + '/student.html' });
+      await pref.update({ checkoutId: out.checkoutId || '' });
+      res.json({ paymentId: pref.id, amount: q.amount, currency: 'USD', reference, url: out.url });
+    } catch (e) {
+      if (pref) await pref.update({ status: 'failed', reason: e.message }).catch(() => {});
+      console.error('[card/initiate]', e.message);
+      e.status ? fail(res, e) : res.status(502).json({ error: 'Could not start the card payment. Please try again.' });
+    }
+  });
+
+  // IntaSend calls this on every state change. We check the challenge, then ask IntaSend before crediting anything.
+  r.post('/intasend/webhook', (req, res) => {
+    const b = req.body || {};
+    if (!intasend.challengeOk(b.challenge)) return res.status(401).json({ error: 'Unauthorized' });
+    res.json({ ok: true });
+    const ref = String(b.api_ref || ''), inv = String(b.invoice_id || '');
+    if (!/^SEMA-C[A-F0-9]{10}$/.test(ref) || !/^[A-Za-z0-9]{4,40}$/.test(inv)) return;
+    (async () => {
+      const q = await db.collection('payments_pending').where('reference', '==', ref).limit(1).get();
+      if (q.empty || q.docs[0].data().provider !== 'intasend') return;
+      const v = await getProvider.card().queryInvoice(inv);
+      if (v.apiRef !== ref) return;                        // the invoice must belong to this payment
+      await q.docs[0].ref.update({ invoiceId: inv });
+      await verifyCard(q.docs[0].id, { ...q.docs[0].data(), invoiceId: inv }, true);
+    })().catch(e => console.error('[intasend webhook]', e.message));
   });
 
   return r;
