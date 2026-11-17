@@ -2,7 +2,569 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#12355B">
 <meta name="robots" content="noindex, nofollow">
+<title>My learning – SemaAfrica</title><!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#12355B">
+<meta name="robots" content="noindex, nofollow">
 <title>My learning – SemaAfrica</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Nunito+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+/* =====================================================================
+   SemaAfrica student dashboard: one mobile-first, responsive stylesheet.
+   1. Tokens   2. Base   3. Shell (top bar + menu)   4. Page
+   5. Components   6. Forms   7. Dialogs
+   8. Breakpoints: 360 small phone · 600 tablet · 700 list columns
+                   900 desktop sidebar · 1400 large screens
+   ===================================================================== */
+
+/* 1. Tokens */
+:root{
+  --paper:#F5F6FA;--card:#FFFFFF;--ink:#14213A;--muted:#5D6A82;--line:#DDE2EC;
+  --brand:#12355B;--brand-ink:#FFFFFF;--sun:#F2B01E;--leaf:#1B8A5A;--rose:#C2374F;
+  --r:16px;--side:264px;
+  --display:'Bricolage Grotesque','Trebuchet MS',sans-serif;
+  --body:'Nunito Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+}
+@media (prefers-color-scheme:dark){:root{
+  --paper:#0E1626;--card:#16223A;--ink:#EEF2FA;--muted:#9AA7C0;--line:#26344F;
+  --brand:#8FB8F0;--brand-ink:#0E1626;--sun:#F5BE3F;--leaf:#4FCB8F;--rose:#F0788D}
+  .chip{background:rgba(14,22,38,.14)}}
+
+/* 2. Base */
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font:400 1rem/1.5 var(--body);
+  padding-bottom:calc(32px + env(safe-area-inset-bottom,0px))}
+a{color:var(--brand);font-weight:700}
+small{display:block;color:var(--muted);font-size:.84rem;line-height:1.4}
+h1,h2,h3{margin:0}
+
+/* 3. Shell: sticky top bar and scrolling pill menu on phones/tablets */
+.bar{position:sticky;top:0;z-index:30}
+.top{background:repeating-linear-gradient(90deg,var(--sun) 0 18px,var(--leaf) 18px 36px,var(--rose) 36px 54px,var(--brand) 54px 72px) left bottom/100% 5px no-repeat,var(--brand);
+  color:var(--brand-ink);padding:calc(10px + env(safe-area-inset-top,0px)) 16px 15px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.logo{font:800 1.25rem var(--display);color:inherit;text-decoration:none;letter-spacing:-.01em}
+.logo b{color:var(--sun)}
+.chip{font:700 .85rem var(--body);background:rgba(255,255,255,.16);color:inherit;border-radius:99px;padding:5px 12px;white-space:nowrap}
+.menu{display:flex;gap:6px;overflow-x:auto;padding:8px 12px;background:var(--card);border-bottom:1px solid var(--line);
+  scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.menu::-webkit-scrollbar{display:none}
+.menu button{flex:none;appearance:none;border:0;background:transparent;color:var(--muted);font:700 .92rem var(--body);
+  min-height:44px;padding:8px 16px;border-radius:99px;cursor:pointer;white-space:nowrap}
+.menu button:hover{background:color-mix(in srgb,var(--brand) 10%,var(--card));color:var(--ink)}
+.menu button[aria-current=true]{background:var(--brand);color:var(--brand-ink)}
+.menu .out{color:var(--rose);margin-left:auto}
+.menu button:focus-visible{outline:3px solid var(--sun);outline-offset:-3px}
+
+/* 4. Page */
+.main{max-width:720px;margin:0 auto;padding:22px 16px 8px}
+#title{font:800 1.75rem/1.15 var(--display);letter-spacing:-.02em;margin-bottom:14px}
+.msg{margin:0 0 12px;min-height:0;font-weight:700}
+.msg:empty{display:none}
+.msg.ok,.msg.err{padding:12px 14px;border-radius:12px;font-size:.95rem}
+.msg.ok{background:color-mix(in srgb,var(--leaf) 16%,var(--card));color:var(--ink);border:1px solid var(--leaf)}
+.msg.err{background:color-mix(in srgb,var(--rose) 14%,var(--card));color:var(--ink);border:1px solid var(--rose)}
+#view>p{margin:0 0 14px}
+
+/* 5. Components */
+.card,.row,.empty{background:var(--card);border:1px solid var(--line);border-radius:var(--r)}
+.card{padding:16px}
+.card h2{font:800 1.5rem/1.2 var(--display);margin-top:4px}
+.g{display:grid;gap:12px;grid-template-columns:1fr 1fr;margin-top:14px}
+.g .card.wide{grid-column:1/-1}
+.row{display:flex;flex-direction:column;gap:12px;padding:14px;margin-bottom:10px}
+.row strong{font-weight:700}
+.row .pill{vertical-align:middle}
+.row>.btn{width:100%}
+.acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.acts .btn{flex:1 1 auto}
+h3.sec{font:700 1.2rem var(--display);margin:26px 0 10px}
+.pill{display:inline-block;font:700 .75rem/1 var(--body);padding:5px 9px;border-radius:99px;background:color-mix(in srgb,var(--brand) 14%,var(--card));color:var(--ink);margin-left:4px}
+.empty{padding:22px 18px;text-align:left;border-style:dashed}
+.empty strong{display:block;font:700 1.15rem var(--display);margin-bottom:4px}
+.empty p{margin:0 0 14px;color:var(--muted)}
+.empty .btn+.btn{margin-left:8px}
+.tools{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.tools p{margin:0}
+.quick{display:grid;gap:10px;margin-top:16px}
+.dash{display:grid;gap:12px}
+.dash .g{margin-top:0}
+
+.hero{background:var(--brand);color:var(--brand-ink);border:0;padding:20px 18px;border-radius:20px;position:relative;overflow:hidden}
+.hero small{color:inherit;opacity:.8}
+.hero h2{font:800 1.8rem/1.15 var(--display);margin:6px 0 16px;letter-spacing:-.02em}
+.hero .btn{background:var(--sun);color:#14213A;border-color:var(--sun);width:100%}
+.hero .btn:disabled{background:transparent;color:inherit;border-color:currentColor;opacity:.75}
+.hero a:not(.btn){color:var(--sun)}
+.hero::after{content:"";position:absolute;right:-30px;top:-30px;width:110px;height:110px;border-radius:50%;
+  background:repeating-radial-gradient(circle,rgba(255,255,255,.14) 0 6px,transparent 6px 14px);pointer-events:none}
+
+.btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:46px;padding:10px 18px;
+  border:2px solid var(--brand);border-radius:12px;background:var(--brand);color:var(--brand-ink);
+  font:700 1rem var(--body);text-decoration:none;cursor:pointer;text-align:center}
+.btn.line{background:transparent;color:var(--brand)}
+.btn.sm{min-height:44px;padding:8px 14px;font-size:.95rem}
+.btn:disabled{opacity:.55;cursor:default}
+.btn:focus-visible,input:focus-visible{outline:3px solid var(--sun);outline-offset:2px}
+
+.cat{display:grid;gap:12px;grid-template-columns:1fr}
+.course{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.course .pill{margin-left:0}
+.course h3{font:700 1.25rem var(--display)}
+.pr{font:800 1.7rem var(--display)}
+.pr small{display:inline;font:600 .85rem var(--body);color:var(--muted)}
+.course .btn{width:100%;margin-top:auto}
+
+/* 6. Forms */
+.form{display:grid;gap:14px}
+label{display:grid;gap:6px;font-weight:700}
+input[type=text],input[type=tel],input:not([type]){width:100%;min-height:48px;padding:10px 14px;border:2px solid var(--line);border-radius:12px;
+  background:var(--card);color:var(--ink);font:400 1rem var(--body)}
+input[type=checkbox],input[type=radio]{width:22px;height:22px;accent-color:var(--brand);flex:none}
+.form label:has(input[type=checkbox]),.form label:has(input[type=radio]){display:flex;gap:12px;align-items:center;min-height:44px;font-weight:600}
+
+/* 7. Dialogs: bottom sheet on phones, centred modal on larger screens */
+dialog{border:0;padding:22px 18px calc(22px + env(safe-area-inset-bottom,0px));width:100%;max-width:520px;max-height:90dvh;overflow:auto;
+  margin:auto auto 0;border-radius:22px 22px 0 0;background:var(--paper);color:var(--ink)}
+dialog::backdrop{background:rgba(8,14,26,.6)}
+dialog[open]{animation:up .22s ease-out}
+@keyframes up{from{transform:translateY(24px);opacity:0}to{transform:none;opacity:1}}
+dialog h2{font:800 1.4rem var(--display)}
+dialog .btn{margin-top:4px}
+@media (prefers-reduced-motion:reduce){dialog[open]{animation:none}}
+
+/* 8a. Very small phones */
+@media (max-width:360px){
+  .main{padding:18px 12px 8px}
+  #title{font-size:1.5rem}
+  .g{grid-template-columns:1fr}
+}
+
+/* 8b. Tablet: 600px and up. Same top bar, roomier content */
+@media (min-width:600px){
+  .main{max-width:880px;padding:28px 24px 8px}
+  #title{font-size:2rem}
+  .menu{justify-content:center;flex-wrap:wrap;overflow:visible}
+  .menu .out{margin-left:0}
+  .cat{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+  .g{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+  .quick{display:flex;flex-wrap:wrap}
+  .quick .btn{flex:0 1 auto}
+  .row{flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:space-between}
+  .row>div:first-child{flex:1 1 200px;min-width:0}
+  .row>.btn{width:auto}
+  .acts .btn{flex:0 0 auto}
+  .hero .btn{width:auto;min-width:200px}
+  dialog{max-width:560px;margin:auto;border-radius:22px;padding:28px 26px}
+}
+
+/* 8c. Lists flow into columns from 700px; forms and quiz taking stay narrow */
+@media (min-width:700px){
+  #view{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;align-items:stretch}
+  #view>*{min-width:0}
+  #view>:not(.row){grid-column:1/-1}
+  #view>.row{margin-bottom:0}
+  #view>.g{max-width:560px}
+  #view>p{max-width:70ch}
+  #view.narrow{display:block;max-width:680px}
+  #view.narrow>.row,#view.narrow>.card{margin-bottom:10px}
+  .dash{grid-template-columns:1.6fr 1fr}
+  .dash .g{grid-template-columns:1fr;grid-template-rows:1fr 1fr;max-width:none}
+  .dash .hero{display:flex;flex-direction:column;justify-content:center}
+}
+
+/* 8d. Desktop: 900px and up. Fixed sidebar menu, wide content area */
+@media (min-width:900px){
+  body{padding-left:var(--side);padding-bottom:48px}
+  .bar{position:fixed;top:0;left:0;bottom:0;width:var(--side);height:100vh;height:100dvh;z-index:30;
+    display:flex;flex-direction:column;overflow:hidden;
+    background:var(--card);border-right:1px solid var(--line)}
+  .top{flex:none;flex-direction:column;align-items:flex-start;gap:10px;padding:20px 20px 18px}
+  .logo{font-size:1.5rem}
+  .menu{flex:1 1 auto;min-height:0;flex-direction:column;flex-wrap:nowrap;justify-content:flex-start;gap:2px;
+    padding:10px 12px;overflow-x:hidden;overflow-y:auto;border-bottom:0}
+  .menu button{flex:none;width:100%;min-height:40px;text-align:left;border-radius:10px;padding:8px 16px}
+  .menu .out{margin:auto 0 0;border-top:1px solid var(--line);border-radius:0 0 10px 10px;padding-top:12px}
+
+  .main{max-width:1100px;padding:40px 40px 8px}
+  #title{font-size:2.4rem;margin-bottom:20px}
+  .cat{grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+  .g{gap:16px}
+  .hero{padding:30px 32px}
+  .hero h2{font-size:2.4rem}
+  .card h2{font-size:1.8rem}
+  .row{padding:16px 20px}
+  .row:hover{border-color:var(--brand)}
+}
+
+/* 8e. Large desktop: 1400px and up */
+@media (min-width:1400px){
+  :root{--side:288px}
+  .main{max-width:1240px;padding:48px 56px 8px}
+  .cat{grid-template-columns:repeat(3,1fr)}
+  #view{grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
+}
+</style></head><body>
+
+<div class="bar">
+  <header class="top"><a class="logo" href="index.html">Sema<b>Africa</b></a><span class="chip" id="chip" hidden></span></header>
+  <nav class="menu" id="tabs" aria-label="Student menu"></nav>
+</div>
+<main class="main"><h1 id="title">Karibu</h1><p class="msg" id="flash" aria-live="polite"></p><div id="view"><p>Loading…</p></div></main>
+
+<dialog id="rsDlg" aria-label="Choose a new time"><div id="rsBody"></div></dialog>
+<dialog id="payDlg" aria-label="Pay for a course"><div id="payBody"></div></dialog>
+
+<script>
+(function(){
+  var shown=false;
+  function f(){
+    if(shown)return;shown=true;
+    var v=document.getElementById("view"),t=document.getElementById("title"),off=navigator.onLine===false;
+    if(t)t.textContent=off?"You are offline":"We could not load this page";
+    if(v){
+      v.innerHTML='<div class="empty"><strong></strong><p></p><button class="btn" type="button" onclick="location.reload()">Try again</button></div>';
+      v.querySelector("strong").textContent=off?"No internet connection":"Something went wrong";
+      v.querySelector("p").textContent=off
+        ?"Please check your network and try again. Your lessons and progress are safe."
+        :"Please check your connection and try again. If the problem continues, contact your teacher or SemaAfrica support.";
+    }
+  }
+  addEventListener("unhandledrejection",f);
+  addEventListener("error",f);
+  addEventListener("online",function(){if(shown)location.reload()});
+})();
+</script>
+<script type="module">
+import {auth,db,HOME,WORKER_URL} from "./js/firebase.js";
+import * as FB from "./js/firebase.js";
+const SERVER_URL=(FB.SERVER_URL||"").replace(/\/+$/,"");
+import {onAuthStateChanged,signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {doc,getDoc,updateDoc,addDoc,collection,query,where,getDocs,writeBatch,serverTimestamp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+const $=id=>document.getElementById(id), view=$("view");
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const dt=v=>v&&v.toDate?v.toDate():null;
+const fdt=v=>dt(v).toLocaleString([],{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
+const fd=v=>{const d=dt(v);return d?d.toLocaleDateString([],{day:"numeric",month:"short",year:"numeric"}):"–"};
+const money=(a,c)=>(c==="KES"?"KES ":"$")+Number(a||0).toLocaleString();
+const empty=(t,p,a)=>`<div class="empty"><strong>${t}</strong><p>${p}</p>${a?`<a class="btn" href="${a[1]}"${a[1].length>1&&a[1][0]==="#"?` data-go="${a[1].slice(1)}"`:""}>${a[0]}</a>`:""}</div>`;
+const flash=(t,ok=true)=>{$("flash").className="msg "+(ok?"ok":"err");$("flash").textContent=t;if(t)scrollTo({top:0,behavior:"smooth"})};
+// Turns raw browser/network errors into a clear, professional message
+const friendly=x=>(!navigator.onLine||/failed to fetch|load failed|networkerror/i.test((x&&x.message)||""))
+  ?"No internet connection. Please check your network and try again."
+  :((x&&x.message&&!x.code)?x.message:"Something went wrong. Please try again.");
+let uid,me,enr=[],mine=[],openSlots=[],slotsErr="",prog=[],pays=[],mats=[],catalog=[],cur="overview",
+    quizzes=[],attempts=[],qz=null,qAns=[],qDone=null,qErr=false;
+
+/* ── Join button timing: opens JOIN_EARLY minutes before the start, closes when the class ends ── */
+const JOIN_EARLY=10;
+const endMs=l=>dt(l.start).getTime()+(Number(l.duration)||45)*60000;
+const joinState=l=>{const n=Date.now(),s=dt(l.start).getTime();return n>=endMs(l)?"ended":n>=s-JOIN_EARLY*60000?"live":"wait"};
+const opensTxt=l=>{const d=new Date(dt(l.start).getTime()-JOIN_EARLY*60000),t={hour:"2-digit",minute:"2-digit"};
+  return d.toDateString()===new Date().toDateString()?"at "+d.toLocaleTimeString([],t):d.toLocaleString([],{weekday:"short",...t})};
+
+async function load(){
+  const q=(c,f,v)=>getDocs(query(collection(db,c),where(f,"==",v))).then(s=>s.docs.map(d=>({id:d.id,...d.data()})));
+  const [e,m,p,y,m1,m2,cs]=await Promise.all([q("enrollments","userId",uid),q("lessons","studentId",uid),q("progress","studentId",uid),q("payments","userId",uid),q("materials","studentId",uid),q("materials","studentId",""),getDocs(collection(db,"courses"))]);
+  enr=e;mine=m;catalog=cs.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.active!==false).sort((a,b)=>(a.type==="Trial"?-1:0)-(b.type==="Trial"?-1:0)||a.usd-b.usd);prog=p.sort((a,b)=>dt(b.date)-dt(a.date));pays=y.sort((a,b)=>dt(b.createdAt)-dt(a.createdAt));
+  // Open times load on their own, so a failure here shows a clear message instead of "no times"
+  slotsErr="";
+  try{
+    const o=await q("lessons","status","open");
+    openSlots=o.filter(l=>dt(l.start)&&dt(l.start)>new Date()).sort((a,b)=>dt(a.start)-dt(b.start));
+  }catch(x){openSlots=[];slotsErr=x.code||x.message||"error"}
+  const seen={};mats=[...m1,...m2].filter(x=>!seen[x.id]&&(seen[x.id]=1)).sort((a,b)=>(dt(b.createdAt)||0)-(dt(a.createdAt)||0));
+  // Quizzes: two queries (assigned to me, and for all students), as the Firestore rules require.
+  // A failure here must not break the rest of the page.
+  qErr=false;
+  try{
+    const [qa,qb2,qc]=await Promise.all([q("quizzes","studentId",uid),q("quizzes","studentId",""),q("quizAttempts","studentId",uid)]);
+    const sn={};
+    quizzes=[...qa,...qb2].filter(x=>!sn[x.id]&&(sn[x.id]=1)).sort((x,y)=>(dt(y.createdAt)||0)-(dt(x.createdAt)||0));
+    attempts=qc.sort((x,y)=>(dt(y.date)||0)-(dt(x.date)||0));
+  }catch{qErr=true;quizzes=[];attempts=[]}
+  await Promise.all(mine.filter(l=>l.status==="booked"&&endMs(l)>Date.now()).map(async l=>{
+    try{const s=await getDoc(doc(db,"lessonLinks",l.id));if(s.exists())l.meetLink=s.data().meetLink}catch{}}));
+}
+const usable=()=>enr.filter(e=>e.status==="active"&&e.lessonsLeft>0&&(!e.expiresAt||dt(e.expiresAt)>new Date()));
+const credits=()=>usable().reduce((a,e)=>a+e.lessonsLeft,0);
+// A Trial priced at 0 is claimed with no payment. A Trial with a price is paid for with M-Pesa like any plan.
+const isFree=c=>c.type==="Trial"&&!(Number(c.kes)>0);
+// Trial lessons and regular lessons are booked separately: a plan only books times of its own kind
+const isTr=t=>/^trial/i.test(t||"");
+const fit=l=>usable().some(e=>isTr(e.type)===isTr(l.type));
+// A booked class stays "upcoming" until it has finished, not just until it has started
+const upcoming=()=>mine.filter(l=>l.status==="booked"&&endMs(l)>Date.now()).sort((a,b)=>dt(a.start)-dt(b.start));
+const joinHtml=(l,st)=>st==="ended"?'<button class="btn sm" type="button" disabled>Class ended</button>'
+  :st==="live"?(l.meetLink?`<a class="btn sm" href="${esc(l.meetLink)}" target="_blank" rel="noopener">Join class</a>`
+                          :'<button class="btn sm" type="button" disabled>Link coming soon</button>')
+  :`<button class="btn sm" type="button" disabled>Join opens ${opensTxt(l)}</button>`;
+const jkey=l=>joinState(l)+(l.meetLink?"1":"0");
+const join=l=>`<span class="jn" style="display:contents" data-id="${l.id}" data-st="${jkey(l)}">${joinHtml(l,joinState(l))}</span>`;
+// Re-check every 15 seconds so the button switches on and off without a page refresh
+async function tickJoin(){
+  // pick up a link the teacher added after this page loaded (only while the class is live)
+  await Promise.all(mine.filter(l=>l.status==="booked"&&!l.meetLink&&joinState(l)==="live").map(async l=>{
+    try{const s=await getDoc(doc(db,"lessonLinks",l.id));if(s.exists())l.meetLink=s.data().meetLink}catch{}}));
+  let ended=false;
+  document.querySelectorAll(".jn").forEach(el=>{const l=mine.find(x=>x.id===el.dataset.id);if(!l)return;
+    const k=jkey(l);if(k===el.dataset.st)return;
+    el.dataset.st=k;el.innerHTML=joinHtml(l,joinState(l));if(joinState(l)==="ended")ended=true});
+  // when a class finishes, move it out of "next class" / "upcoming" (keep scroll position)
+  if(ended&&(cur==="overview"||cur==="upcoming")&&!document.querySelector("dialog[open]")){const y=scrollY;show(cur);scrollTo(0,y)}}
+setInterval(tickJoin,15000);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)tickJoin()});
+const matRow=m=>`<div class="row"><div><strong>${esc(m.title)}</strong> <span class="pill">${esc(m.type||"Notes")}</span> <span class="pill">${esc(m.level||"All levels")}</span><small>Added ${fd(m.createdAt)}</small></div>
+  ${m.link?`<a class="btn line sm" href="${esc(m.link)}" target="_blank" rel="noopener">Watch</a>`:`<button class="btn line sm" data-act="open" data-id="${m.id}">Open</button>`}</div>`;
+const refreshBtn='<button class="btn line sm" data-act="refresh" type="button">Refresh times</button>';
+const PAGES={
+overview:["Overview",()=>{const n=upcoming()[0],lv=prog[0];
+  return `<p>Hujambo, ${esc(me.name)}! Here is where your learning stands.</p>
+  <div class="dash"><div class="card hero"><small>Next class</small><h2>${n?fdt(n.start):"None booked"}</h2>${n?join(n):`<a class="btn" href="#" data-go="book">Book a lesson</a>`}</div>
+  <div class="g"><div class="card"><small>Lessons left</small><h2>${credits()}</h2></div>
+  <div class="card"><small>Your level</small><h2>${lv?esc(lv.level):"Not set"}</h2></div></div></div>
+  <div class="quick"><a class="btn line" href="#" data-go="browse">Browse courses</a></div>`+(enr.length?"":`<div style="margin-top:16px">`+empty("You are not enrolled yet","Start with a trial lesson, or choose a plan to unlock live classes, recordings and notes.",["Browse courses","#browse"])+`</div>`)}],
+browse:["Browse courses",()=>{
+  if(!catalog.length)return empty("No courses are published yet","New courses will appear here. Check back soon.");
+  const own=id=>enr.some(e=>e.courseId===id&&e.status==="active"&&e.lessonsLeft>0&&(!e.expiresAt||dt(e.expiresAt)>new Date()));
+  const used=id=>enr.some(e=>e.courseId===id);   // a trial lesson can only be had once
+  const card=c=>{
+    if(isFree(c))return `<article class="card course"><span class="pill">${esc(c.type)}</span><h3>${esc(c.name)}</h3>
+     <small>${c.lessons} lesson${c.lessons>1?"s":""} × ${c.minutes} min · no payment needed</small>
+     <div class="pr">Free</div>
+     ${used(c.id)?'<span class="pill">You have had your trial lesson</span>':`<button class="btn" data-act="free" data-id="${c.id}">Start trial lesson</button>`}</article>`;
+    const had=c.type==="Trial"&&used(c.id);
+    return `<article class="card course"><span class="pill">${esc(c.type)}</span><h3>${esc(c.name)}</h3>
+     <small>${c.lessons} lesson${c.lessons>1?"s":""} × ${c.minutes} min${c.type==="Monthly"?" · valid for 30 days":""}</small>
+     <div class="pr">KES ${Number(c.kes).toLocaleString()} <small>≈ $${c.usd}</small></div>${c.lessons>1&&c.usd>0?`<small>About $${(c.usd/c.lessons).toFixed(2)} per lesson</small>`:""}
+     ${had?'<span class="pill">You have had your trial lesson</span>':`${own(c.id)?'<span class="pill">You have this plan</span>':""}<button class="btn" data-act="enrol" data-id="${c.id}">${own(c.id)?"Buy again":"Enrol with M-Pesa"}</button>`}</article>`};
+  const tr=catalog.find(c=>c.type==="Trial");
+  const intro=!tr?"Pick a plan and pay with M-Pesa.":isFree(tr)?"Start with a free trial lesson, or pick a plan. You pay with M-Pesa.":"Start with a trial lesson (KES "+Number(tr.kes).toLocaleString()+"), or pick a plan. You pay with M-Pesa.";
+  return `<p>${intro} Then book your lessons right away.</p><div class="cat">${catalog.map(card).join("")}</div>
+   <p style="margin-top:14px"><small>Paying from outside Kenya? Choose a plan, then pay by card in US dollars.</small></p>`}],
+courses:["My enrolled courses",()=>enr.length?enr.map(e=>`<div class="row"><div><strong>${esc(e.courseName)}</strong> <span class="pill">${esc(e.status)}</span><small>${e.lessonsLeft} of ${e.lessonsTotal} lessons left · started ${fd(e.startDate)}${e.expiresAt?" · ends "+fd(e.expiresAt):""}</small></div></div>`).join(""):empty("No courses yet","Once you enrol, your courses appear here.",["Browse courses","#browse"])],
+book:["Book a lesson",()=>{
+  if(!usable().length)return empty("You need an active plan to book","You have no lessons left. Start a trial lesson or choose a plan, or ask your teacher if you think this is a mistake.",["Browse courses","#browse"]);
+  const head=`<div class="tools"><p>You have <strong>${credits()}</strong> lesson${credits()===1?"":"s"} left. Booking uses one.</p>${refreshBtn}</div>`;
+  if(slotsErr)return head+empty("Open times could not be loaded","Tap Refresh to try again. If it keeps happening, tell your teacher this code: "+esc(slotsErr));
+  const fits=openSlots.filter(fit);
+  return head+(fits.length?fits.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"Your teacher")} · ${esc(l.courseName||l.type)}${l.topic?" · "+esc(l.topic):""} · ${l.duration} min</small></div><button class="btn sm" data-act="book" data-id="${l.id}">Book this time</button></div>`).join(""):
+    empty(openSlots.length?"No open times for your plan":"No open times right now",
+      openSlots.length?"There are open times, but they are for a different kind of lesson. Trial lessons and regular lessons are booked separately. Tap Refresh to check again.":"Your teacher has not published new times yet. Tap Refresh to check again."))}],
+upcoming:["Classes",()=>{const u=upcoming(),past=mine.filter(l=>!u.includes(l)&&dt(l.start)<new Date()).sort((a,b)=>dt(b.start)-dt(a.start));
+  return (u.length&&SERVER_URL?`<p><small>Free to cancel or move a class up to ${cancelHrs} hours before it starts. Later changes use the lesson.</small></p>`:"")+(u.length?u.map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong><small>${esc(l.teacherName||"")} · ${esc(l.courseName||l.type)}${l.topic?" · "+esc(l.topic):""} · ${l.duration} min</small></div><div class="acts">${join(l)}${SERVER_URL?`<button class="btn line sm" data-act="resched" data-id="${l.id}">Reschedule</button><button class="btn line sm" data-act="cancelLesson" data-id="${l.id}">Cancel</button>`:""}</div></div>`).join(""):empty("No classes scheduled","Book a time and it will show here with your meeting link.",["Book a lesson","#"]))+
+  `<h3 class="sec">Past classes</h3>`+(past.length?past.slice(0,30).map(l=>`<div class="row"><div><strong>${fdt(l.start)}</strong> <span class="pill">${esc(l.status)}</span><small>${esc(l.courseName||l.type)}</small></div></div>`).join(""):"<p><small>Nothing yet.</small></p>")}],
+progress:["Progress",()=>{const att=mine.filter(l=>l.status==="attended").length;
+  return `<div class="g" style="margin-top:0"><div class="card"><small>Current level</small><h2>${prog[0]?esc(prog[0].level):"–"}</h2></div><div class="card"><small>Classes attended</small><h2>${att}</h2></div></div><h3 class="sec">Teacher notes</h3>`+
+  (prog.length?prog.map(p=>`<div class="row"><div><strong>${esc(p.topic)}</strong> <span class="pill">${esc(p.level)}</span><small>${fd(p.date)}${p.notes?" · "+esc(p.notes):""}</small></div></div>`).join(""):empty("Nothing recorded yet","After each lesson your teacher adds notes on how you are doing."))}],
+notes:["Notes and exercises",()=>{const l=mats.filter(m=>m.type!=="Recording");return l.length?l.map(matRow).join(""):empty("No materials yet","Downloads from your teacher will appear here.")}],
+recordings:["Recorded lessons",()=>{const l=mats.filter(m=>m.type==="Recording");return l.length?l.map(matRow).join(""):empty("No recordings yet","Replay links for your classes will appear here.")}],
+quizzes:["Quizzes",()=>{
+  if(qDone)return qResult();
+  if(qz)return qTake();
+  if(qErr)return empty("Quizzes could not be loaded","Please try again later. If it keeps happening, tell your teacher.");
+  const l=quizzes.filter(z=>(z.questions||[]).length);
+  return l.length?l.map(z=>{const a=attempts.find(x=>x.quizId===z.id);
+    return `<div class="row"><div><strong>${esc(z.title)}</strong> <span class="pill">${esc(z.level||"All levels")}</span><small>${z.questions.length} question${z.questions.length===1?"":"s"}${a?" · Last score "+a.score+"/"+a.total:""}</small></div><button class="btn sm" data-act="qstart" data-id="${z.id}">${a?"Retake":"Start"}</button></div>`}).join(""):empty("No quizzes yet","Quizzes from your teacher will appear here.")}],
+reminders:["Class reminders",()=>`<p>We remind you before each class so you never miss one.</p>
+  <div class="form"><label><span style="display:contents"><input type="checkbox" id="rmE" ${me.remindEmail!==false?"checked":""}> Email me${me.email?" at "+esc(me.email):""}</span></label>
+  <label><span style="display:contents"><input type="checkbox" id="rmW" ${me.remindWhatsapp?"checked":""}> Send me a WhatsApp message</span></label>
+  <label>WhatsApp number<input id="rmP" type="tel" inputmode="tel" placeholder="07XX XXX XXX or +country code" value="${esc(me.phone||"")}"></label>
+  <button class="btn" data-act="saveRem">Save reminders</button></div>
+  <p style="margin-top:14px"><small>${esc(remNote)} We only message you about your classes.</small></p>`],
+payments:["Payment history",()=>pays.length?pays.map(p=>`<div class="row"><div><strong>${money(p.amount,p.currency)}</strong> · ${esc(p.courseName)}<small>${esc(p.method)} ${esc(p.reference||"")} · ${fd(p.createdAt)}</small></div></div>`).join(""):empty("No payments yet","Receipts for your plans will be listed here.")]
+};
+
+/* ── Free trial lesson (priced at 0): no payment, the server enrols the student once ── */
+async function claimFree(c){
+  if(!c)return;
+  if(!SERVER_URL)throw new Error("Online enrolment is being set up. For now, please ask your teacher to enrol you.");
+  await api("/claim-free","POST",{courseId:c.id});
+  await load();show("book");
+  flash("Your trial lesson is ready. Pick a time below to book it.");
+}
+const ACT={
+ async enrol(b){b.disabled=false;const c=catalog.find(c=>c.id===b.dataset.id);if(!c)return;
+  if(isFree(c))return claimFree(c);   // only a trial priced at 0 skips payment
+  openPay(c)},
+ async free(b){try{await claimFree(catalog.find(c=>c.id===b.dataset.id))}finally{b.disabled=false}},
+ async refresh(b){await load();show(cur);flash("Times updated.")},
+ async open(b){const w=window.open("","_blank");try{const r=await fetch(WORKER_URL+"/file/"+b.dataset.id,{headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});if(!r.ok){const d=await r.json().catch(()=>({}));throw new Error(d.error||"Could not open that file.")}w.location=URL.createObjectURL(await r.blob())}catch(x){if(w)w.close();flash(friendly(x),false)}b.disabled=false},
+ // Book with the plan that matches the lesson: a trial time uses the trial plan, a regular time uses a regular plan
+ async book(b){const l=openSlots.find(x=>x.id===b.dataset.id),e=usable().find(x=>isTr(x.type)===isTr(l&&l.type));if(!l||!e){b.disabled=false;return}if(!confirm("Book "+fdt(l.start)+"? This uses 1 lesson.")){b.disabled=false;return}
+  try{const w=writeBatch(db);
+   w.update(doc(db,"lessons",l.id),{status:"booked",studentId:uid,studentName:me.name,enrollmentId:e.id});
+   w.update(doc(db,"enrollments",e.id),{lessonsLeft:e.lessonsLeft-1});
+   await w.commit();await load();show("upcoming");flash("Booked! Your meeting link is below once your teacher adds it.")}
+  catch(x){
+    if(!navigator.onLine){b.disabled=false;flash("No internet connection. Please check your network and try again.",false);return}
+    try{await load();show("book")}catch{}
+    flash("Sorry, that time was just taken or is no longer available. Please pick another.",false)}}
+};
+
+/* ── Quizzes ── */
+const same=(a,c)=>a.length===c.length&&c.every(x=>a.includes(x));
+const pk=(q,a)=>a&&a.length?a.map(i=>esc(q.options[i]??"?")).join(", "):"No answer";
+function qTake(){
+  return `<p><small>${esc(qz.title)} · ${qz.questions.length} question${qz.questions.length===1?"":"s"}</small></p>`+
+  qz.questions.map((q,i)=>`<div class="card" style="margin-bottom:12px"><strong>${i+1}. ${esc(q.text)}</strong><small>${q.multi?"Choose all that apply":"Choose one"}</small><div class="form" style="margin-top:10px">${q.options.map((o,j)=>`<label><input type="${q.multi?"checkbox":"radio"}" name="q${i}" data-qa="${i}:${j}" ${qAns[i].includes(j)?"checked":""}> ${esc(o)}</label>`).join("")}</div></div>`).join("")+
+  `<p class="msg" id="qm"></p><div class="acts"><button class="btn" data-act="qsubmit">Submit answers</button><button class="btn line" data-act="qquit">Cancel</button></div>`}
+function qResult(){const {z,score,answers}=qDone;
+  return `<div class="card hero"><small>${esc(z.title)}</small><h2>${score} / ${z.questions.length}</h2><button class="btn" data-act="qback">Back to quizzes</button></div><h3 class="sec">Review</h3>`+
+  z.questions.map((q,i)=>{const a=answers[i]||[],ok=same(a,q.correct);
+    return `<div class="row" style="display:block"><strong>${i+1}. ${esc(q.text)}</strong> ${ok?"✓":"✗"}<small>Your answer: ${pk(q,a)}${ok?"":" · Correct: "+pk(q,q.correct)}</small></div>`}).join("")}
+Object.assign(ACT,{
+  async qstart(b){qz=quizzes.find(x=>x.id===b.dataset.id);if(!qz)return;qAns=qz.questions.map(()=>[]);qDone=null;show("quizzes")},
+  async qquit(b){if(!confirm("Leave this quiz? Your answers will not be saved.")){b.disabled=false;return}qz=null;show("quizzes")},
+  async qback(){qz=null;qDone=null;show("quizzes")},
+  async qsubmit(b){const z=qz,un=qAns.findIndex(a=>!a.length);
+    if(un>=0){$("qm").className="msg err";$("qm").textContent="Answer question "+(un+1)+" first.";b.disabled=false;return}
+    const score=z.questions.filter((q,i)=>same(qAns[i],q.correct)).length,total=z.questions.length;
+    // answers are saved as a map {0:[1],1:[0,2]} because Firestore does not allow arrays inside arrays
+    const answers=Object.fromEntries(qAns.map((a,i)=>[i,[...a].sort((x,y)=>x-y)]));
+    await addDoc(collection(db,"quizAttempts"),{quizId:z.id,quizTitle:z.title,teacherId:z.teacherId,studentId:uid,studentName:me.name,score,total,answers,questions:z.questions,date:serverTimestamp()});
+    qDone={z,score,answers};qz=null;await load();show("quizzes")}
+});
+view.addEventListener("change",e=>{const a=e.target.dataset.qa;if(!qz||!a)return;
+  const [i,j]=a.split(":").map(Number),q=qz.questions[i];
+  qAns[i]=q.multi?(e.target.checked?[...new Set([...qAns[i],j])]:qAns[i].filter(x=>x!==j)):[j]});
+
+/* ── M-Pesa and card payment (server decides the price; the browser only shows it) ── */
+let payCourse=null,payId=null,payTimer=null,testMode=false,payAmt=0,payCode="",payUsd=0,payCur="KES",payUrl="";
+const kes=n=>"KES "+Number(n).toLocaleString(), dopen=()=>$("payDlg").open;
+async function api(path,method="GET",body){
+  const r=await fetch(SERVER_URL+"/api/payments"+path,{method,headers:{"Content-Type":"application/json",Authorization:"Bearer "+await auth.currentUser.getIdToken()},body:body?JSON.stringify(body):undefined});
+  const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||"Something went wrong");return d}
+function openPay(c){
+  if(!SERVER_URL){flash("Online payment is being set up. For now, please ask your teacher to enrol you.",false);return}
+  payCourse=c;payId=null;payAmt=c.kes;payCode="";payUsd=c.usd;payCur="KES";payUrl="";drawPay("form");$("payDlg").showModal();
+  fetch(SERVER_URL+"/api/health").then(r=>r.json()).then(h=>{testMode=h.mode==="test"}).catch(()=>{});
+}
+const stopPay=()=>{clearInterval(payTimer);payTimer=null};
+function drawPay(step,x={}){
+  const c=payCourse,b=$("payBody"),close='<button class="btn line sm" data-p="close" type="button">Close</button>';
+  const head=`<h2>${esc(c.name)}</h2><p><small>${c.lessons} lesson${c.lessons>1?"s":""} × ${c.minutes} min</small></p>`;
+  const btns='style="display:grid;gap:8px;margin-top:12px"';
+  if(step==="form")b.innerHTML=head+`<p style="font:800 2rem var(--display);margin:6px 0 14px" id="pp">${kes(payAmt)}</p>
+   <div class="form"><label>M-Pesa phone number<input id="pph" type="tel" inputmode="tel" autocomplete="tel" placeholder="07XX XXX XXX"></label>
+   <label>Discount code (optional)<span style="display:flex;gap:8px"><input id="pcd" value="${esc(payCode)}" autocapitalize="characters"><button class="btn line sm" data-p="apply" type="button">Apply</button></span></label></div>
+   <p class="msg" id="pm" aria-live="polite" style="margin-top:12px"></p><div ${btns}><button class="btn" data-p="pay" type="button">Pay with M-Pesa</button>${Number(c.usd)>0?`<button class="btn line" data-p="card" type="button">Pay by card (<span id="pu">${money(payUsd,"USD")}</span>)</button>`:""}${close}</div>`;
+  else if(step==="wait")b.innerHTML=head+`<p><strong>Check your phone.</strong> Enter your M-Pesa PIN to pay ${kes(payAmt)}.</p>
+   <p class="msg" id="pm" aria-live="polite">${x.late?"Still waiting. If you have paid, tap the button below. If not, close this and try again.":"Waiting for payment…"}</p>
+   <div ${btns}><button class="btn" data-p="check" type="button">I have paid, check now</button>${testMode?'<button class="btn line" data-p="sim" type="button">Simulate payment (test mode)</button>':""}${close}</div>
+   <p style="margin-top:12px"><small>You can close this window. Your plan appears here as soon as the payment is confirmed.</small></p>`;
+  else if(step==="cardwait")b.innerHTML=head+`<p><strong>Complete your card payment</strong> on the secure page that opened (${money(payAmt,"USD")}).</p>${x.url?`<p><a class="btn" href="${esc(x.url)}" target="_blank" rel="noopener">Open payment page</a></p>`:""}
+  <p class="msg" id="pm" aria-live="polite">${x.late?"Still waiting. If you have paid, tap the button below.":"Waiting for payment…"}</p>
+  <div ${btns}><button class="btn" data-p="check" type="button">I have paid, check now</button>${testMode?'<button class="btn line" data-p="sim" type="button">Simulate payment (test mode)</button>':""}${close}</div>`;
+  else if(step==="done")b.innerHTML=head+`<p><strong>You are enrolled. Karibu!</strong></p><p>Your lessons are ready to book.</p><div ${btns}><button class="btn" data-p="book" type="button">Book my first lesson</button></div>`;
+  else if(step==="fail")b.innerHTML=head+`<p class="msg err">${esc(x.reason||"The payment did not go through.")}</p><div ${btns}><button class="btn" data-p="retry" type="button">Try again</button>${close}</div>`;
+}
+function poll(){stopPay();let n=0;payTimer=setInterval(async()=>{
+  if(++n>45){stopPay();if(dopen())drawPay(payCur==="USD"?"cardwait":"wait",{late:true,url:payUrl});return}
+  try{const s=await api("/status/"+payId);
+    if(s.status==="paid")await paid();
+    else if(["failed","amount_mismatch"].includes(s.status)){stopPay();dopen()?drawPay("fail",{reason:s.reason}):flash("The payment did not go through.",false)}
+  }catch{}},4000)}
+async function paid(){stopPay();await load();if(dopen())drawPay("done");else flash("Payment confirmed. You are enrolled!");show(cur)}
+$("payDlg").onclick=async e=>{const b=e.target.closest("[data-p]");if(!b)return;const a=b.dataset.p,m=()=>$("pm");
+  try{
+    if(a==="close")$("payDlg").close();
+    else if(a==="retry"){
+      // after a card attempt payAmt holds a USD figure, so go back to the plain KES price
+      if(payCur==="USD"){payCur="KES";payAmt=payCourse.kes;payUsd=payCourse.usd;payCode="";payUrl=""}
+      drawPay("form")}
+    else if(a==="book"){$("payDlg").close();show("book")}
+    else if(a==="apply"){payCode=$("pcd").value.trim();
+      if(!payCode){payAmt=payCourse.kes;payUsd=payCourse.usd;if($("pu"))$("pu").textContent=money(payUsd,"USD");$("pp").textContent=kes(payAmt);return}
+      const q=await api("/quote","POST",{courseId:payCourse.id,code:payCode});payAmt=q.amount;payUsd=q.usd?q.usd.amount:payCourse.usd;if($("pu"))$("pu").textContent=money(payUsd,"USD");$("pp").textContent=kes(q.amount);
+      m().className="msg ok";m().textContent=q.discount?"Code applied: "+kes(q.discount)+" off.":"Code accepted."}
+    else if(a==="pay"){b.disabled=true;payCode=$("pcd").value.trim();
+      const d=await api("/initiate","POST",{courseId:payCourse.id,phone:$("pph").value,code:payCode});
+      payCur="KES";payId=d.paymentId;payAmt=d.amount;drawPay("wait");poll()}
+    else if(a==="card"){b.disabled=true;payCode=$("pcd").value.trim();const w=window.open("","_blank");
+      try{const d=await api("/card/initiate","POST",{courseId:payCourse.id,code:payCode});
+        payId=d.paymentId;payAmt=d.amount;payCur="USD";payUrl=d.url||"";
+        if(w&&payUrl)w.location=payUrl;else if(w)w.close();
+        drawPay("cardwait",{url:payUrl});poll()}
+      catch(e){if(w)w.close();throw e}}
+    else if(a==="check"){const s=await api("/status/"+payId);if(s.status==="paid")await paid();else{m().className="msg";m().textContent="Not confirmed yet. M-Pesa can take up to a minute."}}
+    else if(a==="sim"){await api("/simulate/"+payId,"POST");await paid()}
+  }catch(err){const el=m();if(el){el.className="msg err";el.textContent=friendly(err)}b.disabled=false}};
+/* ── cancel and reschedule (the server returns the lesson safely) ── */
+let cancelHrs=12;
+if(SERVER_URL)fetch(SERVER_URL+"/api/health").then(r=>r.json()).then(h=>{if(h.cancelHours)cancelHrs=h.cancelHours}).catch(()=>{});
+// The reminder times are set by the admin, so the page asks the server instead of promising fixed ones
+let remNote="Reminders arrive about 24 hours and 1 hour before class, in your own time zone.";
+const offLabel=m=>m>=60&&m%60===0?(m/60)+" hour"+(m===60?"":"s"):m+" minute"+(m===1?"":"s");
+if(SERVER_URL)fetch(SERVER_URL+"/api/reminders/schedule").then(r=>r.json()).then(h=>{if(!Array.isArray(h.offsets))return;
+  const o=h.offsets,b=o.filter(x=>x>0).map(offLabel),s=o.includes(0);
+  remNote=!o.length?"There are no automatic reminders at the moment.":"Reminders arrive "+[b.length?"about "+(b.length>1?b.slice(0,-1).join(", ")+" and "+b[b.length-1]:b[0])+" before class":"",s?(b.length?"and ":"")+"when the class starts":""].filter(Boolean).join(" ")+", in your own time zone."}).catch(()=>{});
+async function lapi(path,body){const r=await fetch(SERVER_URL+"/api/lessons"+path,{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+await auth.currentUser.getIdToken()},body:JSON.stringify(body)});
+  const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||"Something went wrong");return d}
+const isEarly=l=>dt(l.start).getTime()-Date.now()>=cancelHrs*3600000;
+Object.assign(ACT,{
+  async saveRem(b){const w=$("rmW").checked,p=$("rmP").value.trim();
+    if(w&&p.replace(/\D/g,"").length<9){flash("Enter your WhatsApp number, or untick WhatsApp.",false);b.disabled=false;return}
+    const d={remindEmail:$("rmE").checked,remindWhatsapp:w,phone:p,tz:Intl.DateTimeFormat().resolvedOptions().timeZone||""};
+    await updateDoc(doc(db,"users",uid),d);Object.assign(me,d);flash("Reminder settings saved.");b.disabled=false},
+  async cancelLesson(b){const l=mine.find(x=>x.id===b.dataset.id);if(!l){b.disabled=false;return}
+    const msg=isEarly(l)?"Cancel this class? Your lesson will be returned to you.":"This class starts in less than "+cancelHrs+" hours, so cancelling will use the lesson. Cancel anyway?";
+    if(!confirm(msg)){b.disabled=false;return}
+    const d=await lapi("/cancel",{lessonId:l.id});await load();show("upcoming");
+    flash(d.refunded?"Class cancelled. Your lesson was returned.":"Class cancelled. The lesson was used because it was too close to the start time.")},
+  async resched(b){const l=mine.find(x=>x.id===b.dataset.id);b.disabled=false;if(!l)return;
+    if(!isEarly(l)){flash("This class starts in less than "+cancelHrs+" hours, so it can no longer be moved. You can cancel it, but the lesson will be used.",false);return}
+    try{await load()}catch{}   // fresh list of open times
+    // a class can only move to a time of the same kind (trial to trial, regular to regular)
+    const slots=openSlots.filter(s=>s.id!==l.id&&isTr(s.type)===isTr(l.type));
+    $("rsBody").innerHTML=`<h2>Move your class</h2><p><small>Now: ${fdt(l.start)}. Pick a new time and your lesson is kept.</small></p><div style="margin-top:12px">`+
+      (slots.length?slots.map(s=>`<div class="row"><div><strong>${fdt(s.start)}</strong><small>${esc(s.teacherName||"")} · ${s.duration} min</small></div><button class="btn sm" data-mv="${s.id}" data-from="${l.id}">Move here</button></div>`).join(""):"<p>No open times right now. Check back soon.</p>")+
+      '</div><button class="btn line" style="width:100%" data-close type="button">Close</button>';
+    $("rsDlg").showModal()}
+});
+$("rsDlg").onclick=async e=>{if(e.target.closest("[data-close]"))return $("rsDlg").close();const b=e.target.closest("[data-mv]");if(!b)return;b.disabled=true;
+  try{await lapi("/reschedule",{lessonId:b.dataset.from,newLessonId:b.dataset.mv});$("rsDlg").close();await load();show("upcoming");flash("Your class has been moved.")}
+  catch(err){$("rsDlg").close();try{await load();show("upcoming")}catch{}flash(friendly(err),false)}};
+
+/* ── navigation: top pills on phones and tablets, sidebar on desktop ── */
+const NAV=[["overview","Home"],["book","Book"],["upcoming","Classes"],["progress","Progress"],["quizzes","Quizzes"],["browse","Courses"],["courses","My courses"],["notes","Notes"],["recordings","Recordings"],["reminders","Reminders"],["payments","Payments"]];
+function buildNav(){
+  const t=$("tabs");
+  t.innerHTML=NAV.map(([k,l])=>`<button type="button" data-k="${k}">${l}</button>`).join("")+'<button type="button" class="out" data-out>Log out</button>';
+  t.onclick=e=>{const b=e.target.closest("button");if(!b)return;
+    if(b.dataset.out!==undefined)return signOut(auth).then(()=>location.href="index.html");
+    flash("");go(b.dataset.k)};
+}
+// Pages that show times or classes reload their data first, so new slots from the teacher always appear
+async function go(k){
+  if(k==="book"||k==="upcoming"){try{await load()}catch{}}
+  show(k)}
+function show(k){if(k!=="quizzes"){qz=null;qDone=null}cur=k;const [t,h]=PAGES[k];$("title").textContent=t;
+  // forms and quiz taking stay in a narrow column; lists flow into columns on wide screens
+  view.className=(k==="reminders"||(k==="quizzes"&&(qz||qDone)))?"narrow":"";
+  view.innerHTML=h();
+  let active=null;
+  $("tabs").querySelectorAll("button[data-k]").forEach(x=>{const on=x.dataset.k===k;x.setAttribute("aria-current",on);if(on)active=x});
+  if(active&&active.scrollIntoView)active.scrollIntoView({inline:"center",block:"nearest"});
+  const n=credits(),c=$("chip");c.hidden=false;c.textContent=n+" lesson"+(n===1?"":"s")+" left";
+  scrollTo(0,0)}
+view.onclick=async e=>{const g=e.target.closest("[data-go]");if(g){e.preventDefault();return go(g.dataset.go)}
+  const a=e.target.closest("a[href='#']");if(a){e.preventDefault();return go("book")}
+  const b=e.target.closest("[data-act]");if(!b)return;b.disabled=true;try{await ACT[b.dataset.act](b)}catch(x){flash(friendly(x),false);b.disabled=false}};
+onAuthStateChanged(auth,async u=>{
+  if(!u)return location.href="auth.html";
+  uid=u.uid;const s=await getDoc(doc(db,"users",uid));
+  me=s.exists()?s.data():{name:u.displayName||"student",role:"student"};
+  if(me.role!=="student")return location.href=HOME[me.role]||HOME.student;
+  try{await load()}catch(e){flash("We could not load your data. Please check your internet connection and refresh the page.",false)}
+  buildNav();show("overview");
+  const pl=sessionStorage.getItem("sema_plan");
+  if(pl){sessionStorage.removeItem("sema_plan");const c=catalog.find(x=>x.id===pl);
+    if(c){show("browse");
+      if(isFree(c)){try{await claimFree(c)}catch(x){flash(friendly(x),false)}}
+      else openPay(c)}}
+});
+</script></body></html>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Nunito+Sans:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
 /* =====================================================================
