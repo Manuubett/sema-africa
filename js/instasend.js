@@ -11,12 +11,11 @@ function assertConfigured() {
   console.log(`IntaSend: ${LIVE ? 'LIVE' : 'sandbox'} | card tariff ${TARIFF}`);
 }
 
-async function call(path, body) {
-  const r = await fetch(BASE + path, {
-    method: 'POST',
-    headers: { Authorization: 'Bearer ' + env.INTASEND_SECRET_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+// Checkout creation needs only the publishable key (sent in the body). The status check needs the secret token.
+async function call(path, body, auth = true) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (auth) headers.Authorization = 'Bearer ' + env.INTASEND_SECRET_KEY;
+  const r = await fetch(BASE + path, { method: 'POST', headers, body: JSON.stringify(body) });
   const d = await r.json().catch(() => ({}));
   return { ok: r.ok, status: r.status, d };
 }
@@ -45,7 +44,7 @@ module.exports = {
       redirect_url: redirectUrl,
       method: 'CARD-PAYMENT',
       card_tarrif: TARIFF,
-    });
+    }, false);
     if (!ok || !d.url) {
       console.error('[intasend] checkout failed', status, JSON.stringify(d).slice(0, 300));
       throw Object.assign(new Error('Could not start the card payment'), { status: 502 });
