@@ -291,10 +291,17 @@ module.exports = (admin) => {
   });
 
   // Card payment: save a pending record, create the IntaSend checkout page, return its URL
+  // Card payment: save a pending record, create the IntaSend checkout page, return its URL
   r.post('/card/initiate', requireUser, async (req, res) => {
     let pref;
     try {
       if (tooMany(req.uid)) throw httpErr('Please wait a few minutes and try again', 429);
+      // Clean APP_URL (stray quotes, spaces, trailing slash) and refuse to continue if it is not a plain https address
+      const appUrl = String(process.env.APP_URL || '').trim().replace(/^["']|["']$/g, '').replace(/\/+$/, '');
+      if (!/^https:\/\/[A-Za-z0-9.-]+(\/[A-Za-z0-9._~\/-]*)?$/.test(appUrl)) {
+        console.error('[card/initiate] APP_URL is not a valid https address:', JSON.stringify(appUrl));
+        throw httpErr('Card payments are not set up yet', 503);
+      }
       const q = await priceFor(req.body.courseId, req.body.code, 'USD');
       if (q.course.type === 'Trial') {
         const had = await db.collection('enrollments').where('userId', '==', req.uid).where('courseId', '==', String(req.body.courseId)).limit(1).get();
@@ -309,7 +316,7 @@ module.exports = (admin) => {
         currency: 'USD', method: 'Card', provider: 'intasend', code: q.code || '', reference,
         status: 'pending', createdAtMs: Date.now(), createdAt: FieldValue.serverTimestamp() });
       const out = await getProvider.card().createCheckout({ amount: q.amount, currency: 'USD', email, name: u.name, reference,
-        redirectUrl: (process.env.APP_URL || '').replace(/\/+$/, '') + '/student.html' });
+        redirectUrl: appUrl + '/student.html' });
       await pref.update({ checkoutId: out.checkoutId || '' });
       res.json({ paymentId: pref.id, amount: q.amount, currency: 'USD', reference, url: out.url });
     } catch (e) {
