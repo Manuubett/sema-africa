@@ -196,7 +196,7 @@ comms:["Communication",()=>{
   return `<p>Email teachers from here. Tick people below to send to them only, or choose a group.</p>
   <form class="form" id="cmF"><label>Send to<select id="cg"><option value="all">All teachers</option><option value="approved">Approved teachers</option><option value="pending">Paid, waiting for approval</option><option value="unpaid">Teachers who have not paid</option></select></label>
   <label class="full">Subject<input id="cs" required maxlength="120"></label>
-  <label class="full">Message<textarea id="cb" rows="7" required maxlength="3000" placeholder="Each teacher gets this with their name at the top."></textarea></label>
+  <label class="full">Message<textarea id="cb" rows="7" required maxlength="5000" placeholder="Each teacher gets this with their name at the top."></textarea></label>
   <p class="full"><small id="cc"></small></p><button class="btn">Send email</button></form>
   <h3 class="sec">Or choose people</h3>
   <div id="cl">${tch.length?tch.map(u=>`<label class="chk" style="display:block;margin:6px 0"><input type="checkbox" data-c="${u.id}"> ${esc(u.name)} <small>${esc(u.email)} · ${u.approved?"Approved":feeOk(u)?"Awaiting approval":"Unpaid"}</small></label>`).join(""):empty("No teachers yet","Teachers appear here after they sign up.")}</div>
