@@ -6,7 +6,38 @@ module.exports = (admin) => {
   const r = express.Router();
   const db = admin.firestore();
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const SITE = (process.env.SITE_URL || 'https://manuubett.github.io/sema-africa').replace(/\/+$/, '');
+  const SITE = (process.env.SITE_URL || 'https://dehemanuelssolutions.co.ke').replace(/\/+$/, '');
+  const MAX_MESSAGE = 5000;   // keep the same number in the admin page textarea (maxlength)
+
+  // ── Markdown-style text (from ChatGPT/Claude copy-paste) -> safe HTML and clean plain text ──
+  const inline = s => esc(s)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/__(.+?)__/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(])\*(?!\s)([^*\n]+?)\*(?=[\s.,!?)]|$)/g, '$1<em>$2</em>');
+
+  function mdToHtml(raw) {
+    const P = 'margin:0 0 14px;line-height:1.5';
+    return String(raw).replace(/\r\n/g, '\n').split(/\n{2,}/).map(block => {
+      const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+      if (!lines.length) return '';
+      // bullet list
+      if (lines.every(l => /^[-*•]\s+/.test(l)))
+        return `<ul style="margin:0 0 14px;padding-left:20px;line-height:1.5">${lines.map(l => `<li>${inline(l.replace(/^[-*•]\s+/, ''))}</li>`).join('')}</ul>`;
+      // "## Heading" becomes a bold heading
+      if (lines.length === 1) {
+        const h = lines[0].match(/^#{1,6}\s*(.+)$/);
+        if (h) return `<p style="${P};font-weight:bold;font-size:16px">${inline(h[1])}</p>`;
+      }
+      return `<p style="${P}">${lines.map(inline).join('<br>')}</p>`;
+    }).join('');
+  }
+
+  const mdToText = raw => String(raw)
+    .replace(/^\s*[-*]\s+/gm, '• ')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/__(.+?)__/g, '$1')
+    .replace(/(^|[\s(])\*(?!\s)([^*\n]+?)\*(?=[\s.,!?)]|$)/g, '$1$2');
 
   async function requireAdmin(req, res, next) {
     try {
@@ -25,7 +56,7 @@ module.exports = (admin) => {
       if (!N.emailReady()) return res.status(400).json({ error: 'Email is not set up on the server (BREVO_API_KEY and MAIL_FROM)' });
       const ids = [...new Set((Array.isArray(req.body.userIds) ? req.body.userIds : []).map(String))].slice(0, 300);
       const subject = String(req.body.subject || '').trim().slice(0, 120);
-      const message = String(req.body.message || '').trim().slice(0, 3000);
+      const message = String(req.body.message || '').trim().slice(0, MAX_MESSAGE);
       if (!ids.length || !subject || !message) return res.status(400).json({ error: 'Choose people and write a subject and a message' });
 
       const snaps = await db.getAll(...ids.map(id => db.collection('users').doc(id)));
@@ -34,11 +65,15 @@ module.exports = (admin) => {
         .filter(u => u && u.role === 'teacher' && u.email);
       let sent = 0, failed = ids.length - people.length;
 
+      // The message is the same for everyone, so it is converted once
+      const bodyHtml = mdToHtml(message), bodyText = mdToText(message);
+
       const one = async u => {
         const first = String(u.name || 'there').split(' ')[0];
-        const text = `Hujambo ${first}!\n\n${message}\n\nSemaAfrica\n${SITE}/teacher.html`;
-        const html = `<div style="font-family:Arial,sans-serif;color:#14213A;max-width:560px"><p>Hujambo ${esc(first)}!</p>` +
-          `<p style="white-space:pre-line">${esc(message)}</p>` +
+        const text = `Hujambo ${first}!\n\n${bodyText}\n\nSemaAfrica\n${SITE}/teacher.html`;
+        const html = `<div style="font-family:Arial,sans-serif;color:#14213A;max-width:560px">` +
+          `<p style="margin:0 0 14px">Hujambo ${esc(first)}!</p>` +
+          bodyHtml +
           `<p><a href="${esc(SITE)}/teacher.html" style="background:#C42B5B;color:#fff;padding:10px 18px;border-radius:20px;text-decoration:none">Open my dashboard</a></p>` +
           `<p style="color:#777;font-size:12px">SemaAfrica</p></div>`;
         await N.sendEmail(u.email, subject, text, html);
