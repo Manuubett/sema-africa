@@ -7,7 +7,7 @@ module.exports = (admin) => {
   const r = express.Router();
   const db = admin.firestore();
   const { FieldValue, Timestamp } = admin.firestore;
-  const SITE = (process.env.SITE_URL || 'https://manuubett.github.io/sema-africa').replace(/\/+$/, '');
+  const SITE = (process.env.SITE_URL || 'https://dehemanuelssolutions.co.ke').replace(/\/+$/, '');
   const HOURS = Number(process.env.CANCEL_HOURS || 12);   // same setting the cancel/reschedule rules use
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   let running = false;
