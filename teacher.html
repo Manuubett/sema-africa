@@ -30,9 +30,16 @@ const WORKER=(WORKER_URL||"").trim().replace(/\/+$/,"");
 
 // ---- One-time service fee ----
 // The server sets users/{uid}.feePaidUntil after M-Pesa confirms. The browser only reads it, never writes it.
-let feeInfo=null,feeTimer=null,feeNudge=false;
+let feeInfo=null,feeTimer=null;
 const feeUntil=()=>me&&me.feePaidUntil&&me.feePaidUntil.toDate?me.feePaidUntil.toDate():null;
 const feeOk=()=>{const d=feeUntil();return !!d&&d>new Date()};
+const approved=()=>!!(me&&me.approved===true);
+const detailsOk=()=>!!(me&&me.payoutPhone&&me.payoutName);
+// 07XX / 01XX / 7XX / +254… all become 2547XXXXXXXX
+const normPhone=v=>{let s=String(v).replace(/[\s\-+()]/g,"");
+  if(/^0[17]\d{8}$/.test(s))s="254"+s.slice(1);else if(/^[17]\d{8}$/.test(s))s="254"+s;
+  return /^254[17]\d{8}$/.test(s)?s:""};
+let nudge="",season={open:true,message:""};
 async function fapi(path,method="GET",body){
   const r=await fetch(SERVER_URL+"/api/payments"+path,{method,headers:{"Content-Type":"application/json",Authorization:"Bearer "+await auth.currentUser.getIdToken()},body:body?JSON.stringify(body):undefined});
   const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||"Something went wrong");return d}
@@ -99,7 +106,7 @@ const own=c=>getDocs(query(collection(db,c),where("teacherId","==",uid))).then(s
 // Parts load when their page opens. "shared" (students, courses, lesson plans) comes from the 10-minute cache.
 const stamp=new Map(),STALE=3*60*1000,msOf=x=>(x&&x.toMillis)?x.toMillis():0;
 const NEED={students:["core","shared"],timetable:["core","shared"],library:["core","shared"],upcoming:["core","shared"],
-  materials:["mats","shared"],quizzes:["quiz","shared"],progress:["prog","shared"],history:["core"],profile:["profile"],fee:[],settings:[]};
+  materials:["mats","shared"],quizzes:["quiz","shared"],progress:["prog","shared"],history:["core"],profile:["profile"],fee:[],details:[],settings:[]};
 async function load(...parts){
   const jobs=[],done=p=>stamp.set(p,Date.now());
   if(parts.includes("core"))jobs.push((async()=>{
@@ -118,11 +125,15 @@ async function load(...parts){
       cached("students",async()=>(await getDocs(query(collection(db,"users"),where("role","==","student")))).docs.map(d=>({id:d.id,...d.data()})))]); 
     courses=c.filter(x=>x.active!==false).sort((a,b)=>a.usd-b.usd);
     plans=p.filter(x=>x.active!==false).sort((a,b)=>(a.courseNo||0)-(b.courseNo||0)||(a.topicNo||0)-(b.topicNo||0));
-    students=s;done("shared")})());
+    students=s;
+    try{const ss=await getDoc(doc(db,"settings","season"));season=ss.exists()?{open:true,message:"",...ss.data()}:{open:true,message:""}}catch{season={open:true,message:""}}
+    done("shared")})());
   await Promise.all(jobs);
 }
 async function go(k){
   if(!feeOk()&&k!=="fee")k="fee";
+  else if(feeOk()&&!detailsOk()&&k!=="details")k="details";
+  else if(k==="profile"&&!approved())k="timetable";
   const need=(NEED[k]||[]).filter(p=>!stamp.has(p)||Date.now()-stamp.get(p)>STALE);
   if(need.length){
     view.innerHTML="<p>Loading…</p>";
@@ -159,11 +170,19 @@ function drawQ(){const q=$("qL");if(!q)return;q.innerHTML=qu.map((x,i)=>`<div cl
 // ---- Quizzes ----
 const newQ=()=>({text:"",multi:false,options:["",""],correct:[]});
 const letter=i=>String.fromCharCode(65+i);
+// Review status: items go live at once and the admin reviews them afterwards (or takes them down)
+const stPill=x=>x.status==="removed"?'<span class="pill">Taken down by admin</span>':x.reviewed===false?'<span class="pill">Live, awaiting review</span>':'<span class="pill">Live</span>';
+const adminNote=x=>x.status==="removed"&&x.reviewNote?`<small>Admin note: ${esc(x.reviewNote)}</small>`:"";
+// Season control
+const isClosed=()=>season.open===false;
+const closedMsg=()=>season.message||"The season is closed. Uploads, quizzes and new lessons are paused.";
+const closedBanner=()=>isClosed()?`<p class="msg err">${esc(closedMsg())}</p>`:"";
+const guard=()=>{if(isClosed())throw new Error(closedMsg())};
 const pickTxt=(q,a)=>(a&&a.length)?a.map(i=>esc(q.options[i]??"?")).join(", "):"No answer";
 function qList(){
   const rows=quizzes.map(z=>{const n=attempts.filter(a=>a.quizId===z.id).length,c=(z.questions||[]).length;
-    return `<div class="row"><div><strong>${esc(z.title)}</strong> <span class="pill">${esc(z.level||"All levels")}</span><small>${c} question${c===1?"":"s"} · ${z.studentName?esc(z.studentName):"All my students"} · ${n} attempt${n===1?"":"s"}</small></div><div class="acts">${btn("qres",z.id,"Results")}${btn("qedit",z.id,"Edit")}${btn("qdel",z.id,"Delete")}</div></div>`}).join("");
-  return `<p class="msg ${qlErr?"err":""}" id="m">${qlErr?"Quizzes could not be loaded. Publish the Firestore rules for quizzes and quizAttempts.":""}</p><div class="acts" style="margin-bottom:12px">${btn("qnew","","New quiz",false)}</div>`+(rows||empty("No quizzes yet","Click New quiz to write your first one."))}
+    return `<div class="row"><div><strong>${esc(z.title)}</strong> <span class="pill">${esc(z.level||"All levels")}</span> ${stPill(z)}<small>${c} question${c===1?"":"s"} · ${z.studentName?esc(z.studentName):"All my students"} · ${n} attempt${n===1?"":"s"}</small>${adminNote(z)}</div><div class="acts">${btn("qres",z.id,"Results")}${btn("qedit",z.id,"Edit")}${btn("qdel",z.id,"Delete")}</div></div>`}).join("");
+  return closedBanner()+`<p class="msg ${qlErr?"err":""}" id="m">${qlErr?"Quizzes could not be loaded. Publish the Firestore rules for quizzes and quizAttempts.":""}</p><div class="acts" style="margin-bottom:12px">${isClosed()?"":btn("qnew","","New quiz",false)}</div>`+(rows||empty("No quizzes yet","Click New quiz to write your first one."))}
 function qCard(q,i){
   return `<div class="row" style="display:grid;gap:8px"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>Question ${i+1}</strong>${btn("qrmq",i,"Remove question")}</div>
   <div class="form" style="margin:0;padding:0"><label class="full">Question<input data-qk="text" data-qi="${i}" value="${esc(q.text)}" placeholder="Type the question"></label>
@@ -201,7 +220,7 @@ const shrink=f=>new Promise((res,rej)=>{
 const PAGES={
 students:["Student list",()=>{
   const att=id=>lessons.filter(l=>l.studentId===id&&l.status==="attended").length;
-  return `<label>Search<input id="q" placeholder="Type a name or email"></label><div id="list">${students.length?students.map(s=>`<div class="row" data-s="${esc((s.name+" "+s.email).toLowerCase())}"><div><strong>${esc(s.name)}</strong><small>${esc(s.email)} · ${esc(s.goal||"")} · ${att(s.id)} lessons attended</small></div>
+  return `<label>Search<input id="q" placeholder="Type a name"></label><div id="list">${students.length?students.map(s=>`<div class="row" data-s="${esc((s.name||"").toLowerCase())}"><div><strong>${esc(s.name)}</strong><small>${esc(s.goal||"")} · ${att(s.id)} lessons attended</small></div>
    <div class="acts">${btn("prog",s.id,"Record progress")}</div></div>`).join(""):empty("No students yet","Students appear here after they create an account.")}</div>`},
  ()=>{const q=$("q");if(q)q.oninput=()=>document.querySelectorAll("[data-s]").forEach(r=>r.hidden=!r.dataset.s.includes(q.value.trim().toLowerCase()))}],
 
@@ -209,7 +228,8 @@ timetable:["Weekly timetable",()=>{
   const days=[...Array(7)].map((_,i)=>{const d=new Date(week);d.setDate(d.getDate()+i);return d});
   const today=new Date(),todayS=today.toDateString();
   const vis=lessons.filter(l=>showC||l.status!=="cancelled");
-  return `<form class="form" id="slotF"><label>Date<input type="date" id="sd" required min="${iso(today)}" value="${iso(today)}"></label><label>Time<input type="time" id="st" required></label>
+  const closed=season.open===false;
+  return (closed?`<p class="msg err">${esc(season.message||"Scheduling is closed for now. You cannot add new lesson slots.")}</p>`:"")+`<form class="form" id="slotF" ${closed?"hidden":""}><label>Date<input type="date" id="sd" required min="${iso(today)}" value="${iso(today)}"></label><label>Time<input type="time" id="st" required></label>
   <label>Lesson (course)<select id="sco" required><option value="">Choose the lesson…</option>${courses.map(c=>`<option value="${c.id}">${esc(c.name)} · ${c.minutes} min</option>`).join("")}</select></label>
   ${plans.length?`<label>Lesson plan (optional)<select id="spl"><option value="">Not from a lesson plan</option>${planOpts()}</select></label>`:""}
   <label>Topic shown to students (optional)<input id="stp" maxlength="140" placeholder="e.g. Greetings and introductions"></label>
@@ -227,6 +247,7 @@ timetable:["Weekly timetable",()=>{
   if(schedPre){const v=schedPre;schedPre="";if($("spl")&&[...$("spl").options].some(o=>o.value===v)){$("spl").value=v;$("stp").value=planText(v);
     say("Scheduling: "+planText(v)+". Choose the date, time and lesson type, then tap Add to timetable.");scrollTo(0,0)}}
   $("slotF").onsubmit=e=>{e.preventDefault();busy(sub(e.target),async()=>{
+   if(season.open===false)throw new Error(season.message||"Scheduling is closed for now. You cannot add new lesson slots.");
    const s=$("ss").value,ml=$("sm").value.trim();
    if(!ml)throw new Error("Add a meeting link for this lesson.");
    if(!okUrl(ml))throw new Error("The meeting link must start with https://");
@@ -266,6 +287,7 @@ upcoming:["Upcoming lessons",()=>{const now=Date.now();
  ()=>{const f=$("editF");if(!f)return;
   if($("epl"))$("epl").onchange=e=>{const t=planText(e.target.value);if(t)$("etp").value=t};
   f.onsubmit=e=>{e.preventDefault();busy(sub(f),async()=>{
+   guard();
    const l=lessons.find(x=>x.id===editL);if(!l)return;
    const ml=$("el").value.trim();
    if(ml&&!okUrl(ml))throw new Error("The meeting link must start with https://");
@@ -287,17 +309,18 @@ upcoming:["Upcoming lessons",()=>{const now=Date.now();
    }
    editL="";await refresh("Lesson updated.")})}}],
 
-materials:["Learning materials",()=>`<div class="form"><label class="full" style="border:2px dashed color-mix(in srgb,var(--ink) 35%,transparent);border-radius:12px;padding:22px;text-align:center;cursor:pointer">Drop files here or click to choose (PDF, Word, audio, images; up to 25 MB each)<input type="file" id="mf" multiple hidden accept=".pdf,.doc,.docx,.mp3,.m4a,.wav,.ogg,.aac,.jpg,.jpeg,.png,.webp,.gif"></label>
+materials:["Learning materials",()=>closedBanner()+`<div class="form" ${isClosed()?"hidden":""}><label class="full" style="border:2px dashed color-mix(in srgb,var(--ink) 35%,transparent);border-radius:12px;padding:22px;text-align:center;cursor:pointer">Drop files here or click to choose (PDF, Word, audio, images; up to 25 MB each)<input type="file" id="mf" multiple hidden accept=".pdf,.doc,.docx,.mp3,.m4a,.wav,.ogg,.aac,.jpg,.jpeg,.png,.webp,.gif"></label>
   <label>Share with<select id="ms"><option value="">All my students</option>${opts()}</select></label>
-  <button class="btn" id="upAll" type="button">Upload all</button><p class="msg full" id="m"></p></div><div id="qL"></div><form class="form" id="lkF"><label class="full"><strong>Or add a recording link (unlisted YouTube or Vimeo)</strong></label><label>Title<input id="lt" required></label><label>Link<input id="lu" type="url" placeholder="https://…" required></label><button class="btn">Add link</button></form>
+  <button class="btn" id="upAll" type="button">Upload all</button><p class="msg full" id="m"></p></div><div id="qL"></div><form class="form" id="lkF" ${isClosed()?"hidden":""}><label class="full"><strong>Or add a recording link (unlisted YouTube or Vimeo)</strong></label><label>Title<input id="lt" required></label><label>Link<input id="lu" type="url" placeholder="https://…" required></label><button class="btn">Add link</button></form>
   <h2 style="margin:22px 0 4px;font-size:1.3rem">Uploaded</h2>`+
-  (mats.length?mats.map(m=>`<div class="row"><div><strong>${esc(m.title)}</strong> <span class="pill">${esc(m.type||"Notes")}</span> <span class="pill">${esc(m.level||"All levels")}</span>${m.free?' <span class="pill">Free</span>':""}<small>${m.studentName?esc(m.studentName):"All my students"}</small></div><div class="acts">${m.link?`<a class="btn line sm" href="${esc(m.link)}" target="_blank" rel="noopener">Watch</a>`:btn("open",m.id,"Open")}${btn("delmat",m.id,"Delete")}</div></div>`).join(""):empty("Nothing uploaded","Notes and exercises you upload show up for your students.")),
+  (mats.length?mats.map(m=>`<div class="row"><div><strong>${esc(m.title)}</strong> <span class="pill">${esc(m.type||"Notes")}</span> <span class="pill">${esc(m.level||"All levels")}</span>${m.free?' <span class="pill">Free</span>':""} ${stPill(m)}<small>${m.studentName?esc(m.studentName):"All my students"}</small>${adminNote(m)}</div><div class="acts">${m.link?`<a class="btn line sm" href="${esc(m.link)}" target="_blank" rel="noopener">Watch</a>`:btn("open",m.id,"Open")}${btn("delmat",m.id,"Delete")}</div></div>`).join(""):empty("Nothing uploaded","Notes and exercises you upload show up for your students.")),
  ()=>{drawQ();
   $("lkF").onsubmit=e=>{e.preventDefault();busy(sub(e.target),async()=>{
+   guard();
    const u=$("lu").value.trim();if(!/^https:\/\//.test(u))throw new Error("The link must start with https://");
    const s=$("ms").value;
-   await addDoc(collection(db,"materials"),{teacherId:uid,title:$("lt").value.trim(),type:"Recording",level:"All levels",free:false,link:u,studentId:s,studentName:nameOf(s),createdAt:serverTimestamp()});
-   await refresh("Link added.")})};
+   await addDoc(collection(db,"materials"),{teacherId:uid,status:"approved",reviewed:false,title:$("lt").value.trim(),type:"Recording",level:"All levels",free:false,link:u,studentId:s,studentName:nameOf(s),createdAt:serverTimestamp()});
+   await refresh("Link added. Students can see it now, and the admin will review it.")})};
   $("mf").onchange=e=>{const skipped=[];
     [...e.target.files].forEach(f=>{
      if(!OKFILE.test(f.name)){skipped.push(f.name+" (file type not allowed)");return}
@@ -308,6 +331,7 @@ materials:["Learning materials",()=>`<div class="form"><label class="full" style
   $("qL").oninput=e=>{const t=e.target,i=t.dataset.i;if(i!==undefined)qu[i][t.dataset.k]=t.type==="checkbox"?t.checked:t.value};
   $("qL").onclick=e=>{const b=e.target.closest("[data-rm]");if(b){qu.splice(+b.dataset.rm,1);drawQ()}};
   $("upAll").onclick=e=>busy(e.currentTarget,async()=>{
+   guard();
    const todo=qu.filter(x=>x.st!=="done");if(!todo.length){say("Choose at least one file first.",true);return}
    const s=$("ms").value;
    for(const x of todo){x.st="uploading";drawQ();
@@ -315,11 +339,11 @@ materials:["Learning materials",()=>`<div class="form"><label class="full" style
      const up=await fetch(WORKER+"/upload",{method:"PUT",headers:{Authorization:"Bearer "+tok,"X-File-Name":encodeURIComponent(x.f.name),"Content-Type":x.f.type||"application/octet-stream"},body:x.f});
      if(!up.ok)throw new Error((await up.json().catch(()=>({}))).error||up.status);
      const {key}=await up.json();
-     await addDoc(collection(db,"materials"),{teacherId:uid,title:x.title.trim()||x.f.name,type:x.type,level:x.level,free:x.free,fileKey:key,fileName:x.f.name,studentId:s,studentName:nameOf(s),createdAt:serverTimestamp()});
+     await addDoc(collection(db,"materials"),{teacherId:uid,status:"approved",reviewed:false,title:x.title.trim()||x.f.name,type:x.type,level:x.level,free:x.free,fileKey:key,fileName:x.f.name,studentId:s,studentName:nameOf(s),createdAt:serverTimestamp()});
      x.st="done"}catch(err){x.st="error";x.err=err.message}
     drawQ()}
    const ok=qu.filter(x=>x.st==="done").length;qu=qu.filter(x=>x.st!=="done");
-   stamp.clear();await load(...NEED.materials);show("materials");say(ok+" uploaded"+(qu.length?", "+qu.length+" failed. Fix and try again.":"."),qu.length>0)})}],
+   stamp.clear();await load(...NEED.materials);show("materials");say(ok+" uploaded. Students can see them now, and the admin will review them"+(qu.length?", "+qu.length+" failed. Fix and try again.":"."),qu.length>0)})}],
 
 quizzes:["Quizzes",()=>qb?qBuilder():qres?qResults():qList(),
  ()=>{$("title").textContent=qb?(qb.id?"Edit quiz":"New quiz"):qres?"Quiz results":"Quizzes"}],
@@ -366,10 +390,19 @@ profile:["My profile",()=>{const p=prof||{};
     await refresh("Profile saved."+(d.published?" It is now on the website.":" It is not shown on the website yet."))})}}],
 
 fee:["Service fee",()=>{
-  if(feeOk())return `<p class="msg" id="m"></p><div class="row"><div><strong>Your teacher account is active</strong><small>Your one-time service fee is paid. Thank you.</small></div></div>`;
+  if(feeOk())return `<p class="msg" id="m"></p><div class="row"><div><strong>Your service fee is paid</strong><small>Thank you.</small></div></div>`;
   const price=feeInfo?`<p style="font:800 2rem var(--display,inherit);margin:6px 0">KES ${Number(feeInfo.amount).toLocaleString()} <small>${esc(feeInfo.label||"")}</small></p>`:"";
   return `<p class="msg" id="m"></p>
-  <div class="row"><div><strong>Activate your teacher account</strong><small>Pay the one-time service fee to add lesson times, receive bookings and get reminder emails.</small></div></div>
+  <div class="row" style="display:block"><strong>What is this fee for?</strong>
+   <p>This is a <strong>one-time</strong> fee. You pay it once, not every month. It covers:</p>
+   <ul>
+    <li>Setting up and verifying your teacher account.</li>
+    <li>Your place on the SemaAfrica platform: timetable, student bookings, quizzes and learning materials.</li>
+    <li>Automatic email and WhatsApp reminders to your students.</li>
+    <li>The system that records attendance and lesson history.</li>
+    <li>The option to be shown on our website once the admin approves your profile.</li>
+   </ul>
+   <small>After you pay, you will send your M-Pesa details so we know where to send your payments. Then the admin reviews your account.</small></div>
   ${price}
   <form class="form" id="feeF"><label>M-Pesa phone number<input id="fph" type="tel" inputmode="tel" autocomplete="tel" placeholder="07XX XXX XXX" required></label>
   <button class="btn" id="feeBtn">Pay with M-Pesa</button>
@@ -377,7 +410,7 @@ fee:["Service fee",()=>{
   <p><small>You will get an M-Pesa prompt on your phone. Enter your PIN to confirm. This page updates when the payment is confirmed.</small></p>`},
  ()=>{
   const f=$("feeF");if(!f)return;
-  const done=async()=>{stopFee();await reloadMe();stamp.clear();await load(...NEED.timetable);show("timetable");say("Payment confirmed. Your account is active.")};
+  const done=async()=>{stopFee();await reloadMe();stamp.clear();await load(...NEED.timetable);show(detailsOk()?"timetable":"details");say("Payment confirmed."+(detailsOk()?" Your account is active.":" Now send your M-Pesa details to unlock your timetable."))};
   // returns true when the payment is settled (paid or failed)
   const check=async id=>{const s=await fapi("/status/"+id);
     if(s.status==="paid"){await done();return true}
@@ -393,9 +426,26 @@ fee:["Service fee",()=>{
       let n=0;stopFee();feeTimer=setInterval(async()=>{
         if(++n>45){stopFee();say("Still waiting. If you have paid, tap the check button. If not, try again.",true);if($("feeBtn"))$("feeBtn").disabled=false;return}
         try{await check(d.paymentId)}catch{}},4000);
-    }catch(x){say((x&&x.message)||"Something went wrong",true);b.disabled=false}}}]
+    }catch(x){say((x&&x.message)||"Something went wrong",true);b.disabled=false}}}],
 
-,
+details:["Payment details",()=>{
+  const ok=detailsOk();
+  return `<p class="msg" id="m"></p>
+  <div class="row" style="display:block"><strong>Why we need these details</strong>
+   <p>We use your M-Pesa number and the name registered on it to pay you for lessons you teach, and to match payments to the right teacher. The name must be exactly as it appears when you receive money on M-Pesa.</p></div>
+  <form class="form" id="dtF">
+   <label>M-Pesa phone number<input id="dph" type="tel" inputmode="tel" required value="${esc(me.payoutPhone||"")}" placeholder="07XX XXX XXX"></label>
+   <label>Name registered on M-Pesa<input id="dnm" required maxlength="80" value="${esc(me.payoutName||"")}" placeholder="e.g. Jane Wanjiru Mwangi"></label>
+   <label class="chk full"><input type="checkbox" id="dcf" required> I confirm these details are correct</label>
+   <button class="btn">${ok?"Update details":"Save details"}</button></form>`+
+  (ok?`<div class="row"><div><strong>${approved()?"Your account is approved":"Waiting for admin approval"}</strong><small>${approved()?"You can now set up your public profile under My profile.":"The admin will review your details. When you are approved, My profile appears in your menu. Reload this page to see it."}</small></div></div>`:"")},
+ ()=>{$("dtF").onsubmit=e=>{e.preventDefault();busy(sub(e.target),async()=>{
+   const ph=normPhone($("dph").value);if(!ph)throw new Error("Enter a valid Safaricom M-Pesa number, like 0712 345 678.");
+   const nm=$("dnm").value.trim().replace(/\s+/g," ");if(nm.split(" ").length<2)throw new Error("Write the full name as it appears on M-Pesa.");
+   await updateDoc(doc(db,"users",uid),{payoutPhone:ph,payoutName:nm,payoutSubmittedAt:serverTimestamp()});
+   await reloadMe();
+   show("timetable");say("Details saved. The admin will review your account. Your profile will appear in the menu once you are approved.")})}}],
+
 settings:["Email settings",()=>`<p class="msg" id="m"></p>
   <form class="form" id="stF"><label class="chk"><input type="checkbox" id="stM" ${me.morningEmail!==false?"checked":""}> Email me a summary every morning</label>
   <small class="full">It lists today's lessons with their Join links, lessons that still need a meeting link, and lessons waiting to be marked attended or absent. It arrives early in the morning in your time zone${TZ?" ("+esc(TZ)+")":""}. Nothing is sent on a quiet day with nothing to report.</small>
@@ -410,12 +460,14 @@ settings:["Email settings",()=>`<p class="msg" id="m"></p>
 
 async function refresh(msg){stamp.clear();await load(...(NEED[cur]||[]));show(cur);if(msg)say(msg)}
 function show(k){
-  // Teachers who have not paid the service fee can only see the fee page
-  if(!feeOk()&&k!=="fee"){k="fee";feeNudge=true}
+  // Teachers must pay the fee, then send M-Pesa details, before the rest opens. Profile needs admin approval.
+  if(!feeOk()&&k!=="fee"){k="fee";nudge="Pay the service fee to unlock your timetable, lessons and quizzes."}
+  else if(feeOk()&&!detailsOk()&&k!=="details"){k="details";nudge="Send your M-Pesa details to unlock your timetable, lessons and quizzes."}
+  else if(k==="profile"&&!approved())k="timetable";
   if(k!=="fee")stopFee();
   if(k!=="upcoming")editL="";cur=k;const [t,h,b]=PAGES[k];$("title").textContent=t;view.innerHTML=h();if(b)b();
   $("side").querySelectorAll("button[data-k]").forEach(x=>x.setAttribute("aria-current",x.dataset.k===k));
-  if(feeNudge){feeNudge=false;say("Pay the service fee to unlock your timetable, lessons and quizzes.",true)}}
+  if(nudge){say(nudge,true);nudge=""}}
 
 // Ask for a link and save it for one or more lessons
 async function setLinks(ids,current,question){
@@ -472,8 +524,8 @@ view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const
       await deleteDoc(doc(db,"materials",id));
       await refresh("Deleted."+note);
     })}
-  if(a==="qnew"){qb={title:"",level:"All levels",studentId:"",questions:[newQ()]};return show("quizzes")}
-  if(a==="qedit"){const z=quizzes.find(x=>x.id===id);if(!z)return;qb={id:z.id,title:z.title,level:z.level||"All levels",studentId:z.studentId||"",questions:JSON.parse(JSON.stringify(z.questions||[]))};return show("quizzes")}
+  if(a==="qnew"){if(isClosed()){say(closedMsg(),true);return}qb={title:"",level:"All levels",studentId:"",questions:[newQ()]};return show("quizzes")}
+  if(a==="qedit"){if(isClosed()){say(closedMsg(),true);return}const z=quizzes.find(x=>x.id===id);if(!z)return;qb={id:z.id,title:z.title,level:z.level||"All levels",studentId:z.studentId||"",questions:JSON.parse(JSON.stringify(z.questions||[]))};return show("quizzes")}
   if(a==="qres"){qres=id;return show("quizzes")}
   if(a==="qback"||a==="qcancel"){qb=null;qres=null;return show("quizzes")}
   if(a==="qaddq"){syncB();qb.questions.push(newQ());return drawB()}
@@ -486,6 +538,8 @@ view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const
     return busy(b,async()=>{await deleteDoc(doc(db,"quizzes",id));await refresh("Quiz deleted.")})}
   if(a==="qsave"){
     return busy(b,async()=>{
+      guard();
+      if(qb.id){const old=quizzes.find(x=>x.id===qb.id);if(old&&old.status==="removed")throw new Error("The admin took this quiz down. Create a new quiz instead.")}
       syncB();
       const t=qb.title.trim();if(!t)throw new Error("Give the quiz a title.");
       if(!qb.questions.length)throw new Error("Add at least one question.");
@@ -494,11 +548,11 @@ view.onclick=async e=>{const b=e.target.closest("[data-act]");if(!b)return;const
         if(q.options.some(o=>!o.trim()))throw new Error(n+"fill in every option or remove the empty ones.");
         if(!q.correct.length)throw new Error(n+"tick the correct answer.")});
       const st=qb.studentId;
-      const data={title:t,level:qb.level,studentId:st,studentName:nameOf(st),
+      const data={title:t,level:qb.level,studentId:st,studentName:nameOf(st),status:"approved",reviewed:false,submittedAt:serverTimestamp(),
         questions:qb.questions.map(q=>({text:q.text.trim(),multi:!!q.multi,options:q.options.map(o=>o.trim()),correct:[...q.correct].sort((x,y)=>x-y)}))};
-      if(qb.id)await updateDoc(doc(db,"quizzes",qb.id),data);
+      if(qb.id)await updateDoc(doc(db,"quizzes",qb.id),{...data,reviewNote:deleteField()});
       else await addDoc(collection(db,"quizzes"),{...data,teacherId:uid,createdAt:serverTimestamp()});
-      qb=null;await refresh("Quiz saved.")})}
+      qb=null;await refresh("Quiz published. Students can see it now, and the admin will review it.")})}
   if(a==="dellesson"){
     const l=lessons.find(x=>x.id===id);if(!l)return;
     if(l.status==="booked"){say("A booked lesson can't be deleted. Cancel it first so the student gets their lesson back.",true);return}
@@ -553,9 +607,10 @@ onAuthStateChanged(auth,async u=>{
     if(me.role!=="teacher")return location.href=HOME[me.role]||HOME.student;
     // Unpaid teachers may be locked out by the rules, so a failed load must not stop the fee page from opening
     try{await load("core","shared")}catch(e){if(feeOk())throw e}
-    Object.entries(PAGES).forEach(([k,v])=>{const b=document.createElement("button");b.dataset.k=k;b.textContent=v[0];b.onclick=()=>{if(k==="quizzes"){qb=null;qres=null}go(k)};$("side").appendChild(b)});
+    // The Profile menu item only appears once the admin has approved the teacher
+    Object.entries(PAGES).filter(([k])=>k!=="profile"||approved()).forEach(([k,v])=>{const b=document.createElement("button");b.dataset.k=k;b.textContent=v[0];b.onclick=()=>{if(k==="quizzes"){qb=null;qres=null}go(k)};$("side").appendChild(b)});
     const o=document.createElement("button");o.className="out";o.textContent="Log out";o.onclick=()=>signOut(auth).then(()=>location.href="index.html");$("side").appendChild(o);
-    show(feeOk()?"timetable":"fee");
+    show(!feeOk()?"fee":!detailsOk()?"details":"timetable");
     // Load the fee amount without blocking the page (the Render server may be asleep)
     if(SERVER_URL&&!feeOk())fetch(SERVER_URL+"/api/payments/teacher-fee/info").then(r=>r.json()).then(d=>{feeInfo=d;const p=$("fph");if(cur==="fee"&&!feeOk()&&(!p||!p.value))show("fee")}).catch(()=>{});
     // Wake the Render server early so cancelling a lesson is quick later
