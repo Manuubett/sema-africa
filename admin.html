@@ -79,7 +79,7 @@ const dt=v=>v&&v.toDate?v.toDate():null, fd=v=>{const d=dt(v);return d?d.toLocal
 const money=(a,c)=>(c==="KES"?"KES ":"$")+Number(a||0).toLocaleString();
 const empty=(t,p)=>`<div class="empty"><strong>${t}</strong><p>${p}</p></div>`;
 const bt=(a,id,t,line=true,x="")=>`<button class="btn sm ${line?"line":""}" data-act="${a}" data-id="${id}" ${x}>${t}</button>`;
-let uid,users=[],courses=[],enr=[],pays=[],lessons=[],codes=[],quizzes=[],attempts=[],qErr=false,cur="overview",editC="",repCur="USD",plans=[],plErr=false,editP="",selB=new Set(),remOff=[1440,60],remErr=false,feeAmt=0,season={open:true,message:""},msgs=[];
+let uid,users=[],courses=[],enr=[],pays=[],lessons=[],codes=[],quizzes=[],attempts=[],qErr=false,cur="overview",editC="",repCur="USD",plans=[],plErr=false,editP="",selB=new Set(),remOff=[1440,60],remErr=false,feeAmt=0,season={open:true,message:""},msgs=[],mats=[],actM="all";
 const students=()=>users.filter(u=>u.role==="student");
 // A teacher has paid (or been waived) when feePaidUntil is in the future
 const feeOk=u=>{const d=dt(u.feePaidUntil);return !!d&&d>new Date()};
@@ -92,6 +92,7 @@ async function load(){
   qErr=false;const safe=c=>all(c).catch(()=>{qErr=true;return[]});
   [users,courses,enr,pays,lessons,codes]=await Promise.all(["users","courses","enrollments","payments","lessons","discountCodes"].map(all));
   [quizzes,attempts]=await Promise.all([safe("quizzes"),safe("quizAttempts")]);
+  mats=await safe("materials");
   // Lesson plans load safely too, so the page still works before their rules are published
   plErr=false;try{plans=(await all("curriculum")).sort((a,b)=>(a.courseNo||0)-(b.courseNo||0)||(a.topicNo||0)-(b.topicNo||0))}catch{plans=[];plErr=true}
   remErr=false;try{const s=await getDoc(doc(db,"settings","reminders"));remOff=s.exists()&&Array.isArray(s.data().offsets)?s.data().offsets:[1440,60]}catch{remOff=[1440,60];remErr=true}
@@ -145,6 +146,22 @@ const parseLessons=t=>t.split(/\r?\n/).map(x=>x.trim()).filter(Boolean).map((x,i
 const nameOpts=()=>{const cs=[...new Set(plans.map(p=>p.course))];
   return `<optgroup label="Courses">${cs.map(c=>`<option>${esc(c)}</option>`).join("")}</optgroup>`+
    plans.map(p=>`<optgroup label="${esc(p.course+" · Topic "+(p.topicNo||"–")+": "+p.topic)}"><option>${esc(p.topic)}</option>${(p.lessons||[]).map(l=>`<option value="${esc(p.topic+" · Lesson "+l.no+": "+l.title)}">Lesson ${l.no}: ${esc(l.title)}</option>`).join("")}</optgroup>`).join("")};
+
+// ── Teacher activity ──
+const monKey=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+function actRows(m){
+  const inP=v=>{const d=dt(v);return !!d&&(m==="all"||monKey(d)===m)};
+  return users.filter(u=>u.role==="teacher").map(u=>{
+    const L=lessons.filter(l=>l.teacherId===u.id&&inP(l.start)),
+      Q=quizzes.filter(z=>z.teacherId===u.id&&inP(z.createdAt)),
+      M=mats.filter(x=>x.teacherId===u.id&&inP(x.createdAt)),
+      qid=new Set(quizzes.filter(z=>z.teacherId===u.id).map(z=>z.id)),
+      A=attempts.filter(a=>qid.has(a.quizId)&&inP(a.date)),
+      n=s=>L.filter(l=>l.status===s).length,
+      times=[...L.filter(l=>["attended","absent"].includes(l.status)).map(l=>dt(l.start)),...Q.map(z=>dt(z.createdAt)),...M.map(x=>dt(x.createdAt))].filter(Boolean);
+    const r={u,taught:n("attended"),absent:n("absent"),cancelled:n("cancelled"),booked:L.filter(l=>l.status==="booked"&&dt(l.start)>new Date()).length,quizzes:Q.length,mats:M.length,attempts:A.length,last:times.length?new Date(Math.max(...times)):null};
+    r.active=r.taught+r.absent+r.booked+r.quizzes+r.mats>0;
+    return r}).sort((a,b)=>b.active-a.active||b.taught-a.taught||(a.u.name||"").localeCompare(b.u.name||""))}
 const PAGES={
 overview:["Overview",()=>{
   const now=new Date(),mk=d=>d.getFullYear()+"-"+d.getMonth();
@@ -152,7 +169,7 @@ overview:["Overview",()=>{
   const rev=["USD","KES"].map(c=>money(mp.filter(p=>p.currency===c).reduce((a,p)=>a+ +p.amount,0),c)).join(" + ");
   const up=lessons.filter(l=>["open","booked"].includes(l.status)&&dt(l.start)>now).length;
   const tch=users.filter(u=>u.role==="teacher");
-  return `<div class="g">${[["Students",students().length],["Teachers",tch.length],["Teachers who paid the fee",tch.filter(feeOk).length],["Teachers awaiting approval",tch.filter(u=>feeOk(u)&&u.payoutPhone&&!u.approved).length],["Approved teachers",tch.filter(u=>u.approved).length],["Scheduling",season.open!==false?"Open":"Closed"],["Active enrolments",enr.filter(e=>e.status==="active").length],["Upcoming lessons",up],["Revenue this month",rev]].map(([a,b])=>`<div class="card"><small>${a}</small><h2>${b}</h2></div>`).join("")}</div>`}],
+  return `<div class="g">${[["Students",students().length],["Teachers",tch.length],["Active teachers this month",actRows(monKey(new Date())).filter(r=>r.active).length],["Waiting for review",quizzes.filter(z=>z.status==="approved"&&z.reviewed===false).length+mats.filter(m=>m.status==="approved"&&m.reviewed===false).length],["Teachers who paid the fee",tch.filter(feeOk).length],["Teachers awaiting approval",tch.filter(u=>feeOk(u)&&u.payoutPhone&&!u.approved).length],["Approved teachers",tch.filter(u=>u.approved).length],["Season",season.open!==false?"Open":"Closed"],["Active enrolments",enr.filter(e=>e.status==="active").length],["Upcoming lessons",up],["Revenue this month",rev]].map(([a,b])=>`<div class="card"><small>${a}</small><h2>${b}</h2></div>`).join("")}</div>`}],
 
 users:["Students and teachers",()=>`<div class="form"><label>Search<input id="q" placeholder="Name or email"></label><label>Show<select id="rf"><option value="">Everyone</option><option value="student">Students</option><option value="teacher">Teachers</option><option value="admin">Admins</option></select></label></div><div id="ul"></div>`,
  ()=>{const rb=(id,r,t)=>`<button class="btn sm line" data-act="role" data-id="${id}" data-r="${r}">${t}</button>`;
@@ -178,25 +195,36 @@ teacherfees:["Teacher fees and approval",()=>{
    await setDoc(doc(db,"settings","teacherFee"),{amount:a,updatedAt:serverTimestamp()});
    await refresh("Fee amount saved. It applies to the next payment.")}}],
 
+activity:["Teacher activity",()=>{
+  const now=new Date(),months=[...Array(6)].map((_,i)=>monKey(new Date(now.getFullYear(),now.getMonth()-i,1)));
+  const rs=actRows(actM),fmt=d=>d?d.toLocaleDateString([],{day:"numeric",month:"short",year:"numeric"}):"–";
+  return `<p>Who actually worked in the chosen period. Use this before paying teachers. "Taught" counts lessons the teacher marked as attended, so check them against bookings.</p>
+  <div class="g" style="margin-bottom:14px">${[["Active teachers",rs.filter(r=>r.active).length],["Lessons taught",rs.reduce((a,r)=>a+r.taught,0)],["Quizzes set",rs.reduce((a,r)=>a+r.quizzes,0)],["Uploads",rs.reduce((a,r)=>a+r.mats,0)]].map(([a,b])=>`<div class="card"><small>${a}</small><h2>${b}</h2></div>`).join("")}</div>
+  <div class="form"><label>Period<select id="am">${["all",...months].map(m=>`<option value="${m}" ${m===actM?"selected":""}>${m==="all"?"All time":m}</option>`).join("")}</select></label></div>
+  <div class="acts" style="margin:12px 0">${bt("actcsv","","Download CSV for payments",false)}</div>`+
+  (rs.length?rs.map(r=>`<div class="row"><div><strong>${esc(r.u.name)}</strong> <span class="pill">${r.active?"Active":"No activity"}</span> <span class="pill">${r.u.approved?"Approved":"Not approved"}</span>
+   <small>${r.taught} taught · ${r.absent} absent · ${r.cancelled} cancelled · ${r.booked} booked ahead<br>${r.quizzes} quiz${r.quizzes===1?"":"zes"} set · ${r.mats} upload${r.mats===1?"":"s"} · ${r.attempts} student quiz attempt${r.attempts===1?"":"s"}<br>M-Pesa ${esc(r.u.payoutPhone||"not sent")} · ${esc(r.u.payoutName||"")} · last activity ${fmt(r.last)}</small></div></div>`).join(""):empty("No teachers yet","Teachers appear here after they sign up."))},
+ ()=>{$("am").onchange=e=>{actM=e.target.value;show("activity")}}],
+
 season:["Season control",()=>{
   const open=season.open!==false,fut=lessons.filter(l=>l.status==="open"&&dt(l.start)>new Date()).length;
   return `<div class="g" style="margin-bottom:14px">${[["Scheduling",open?"Open":"Closed"],["Active enrolments",enr.filter(e=>e.status==="active").length],["Approved teachers",users.filter(u=>u.role==="teacher"&&u.approved).length],["Future open slots",fut]].map(([a,b])=>`<div class="card"><small>${a}</small><h2>${b}</h2></div>`).join("")}</div>
-  <p>When scheduling is closed, approved teachers cannot add new lesson slots. Lessons already booked are not changed. Close it when you have no active students, and open it again when the season starts.</p>
-  <form class="form" id="seF"><label class="chk"><input type="checkbox" id="seO" ${open?"checked":""}> Teachers can add and schedule lessons</label>
+  <p>When the season is closed, approved teachers cannot add lesson slots, edit lessons, upload materials or links, or create and edit quizzes. Lessons already booked are not changed, and teachers can still mark attendance, cancel and send reminders. Close it when you have no active students, and open it again when the season starts.</p>
+  <form class="form" id="seF"><label class="chk"><input type="checkbox" id="seO" ${open?"checked":""}> Season open: teachers can schedule lessons, upload materials and create quizzes</label>
   <label class="full">Message teachers see when it is closed<input id="seM" maxlength="160" value="${esc(season.message||"")}" placeholder="e.g. No classes this season. We will email you when bookings open."></label>
   <button class="btn">Save</button></form>
   <h3 class="sec">Clean up</h3>
   <div class="row"><div><strong>Cancel all future open slots</strong><small>Removes ${fut} open slot${fut===1?"":"s"} that nobody has booked. Booked lessons are not touched.</small></div><div class="acts">${bt("clearopen","","Cancel open slots")}</div></div>`},
  ()=>{$("seF").onsubmit=async e=>{e.preventDefault();
    await setDoc(doc(db,"settings","season"),{open:$("seO").checked,message:$("seM").value.trim(),updatedAt:serverTimestamp()});
-   await refresh($("seO").checked?"Scheduling is open.":"Scheduling is closed. Teachers cannot add new slots.")}}],
+   await refresh($("seO").checked?"The season is open.":"The season is closed. Teachers cannot add slots, upload or create quizzes.")}}],
 
 comms:["Communication",()=>{
   const tch=users.filter(u=>u.role==="teacher").sort((a,b)=>(a.name||"").localeCompare(b.name||""));
   return `<p>Email teachers from here. Tick people below to send to them only, or choose a group.</p>
   <form class="form" id="cmF"><label>Send to<select id="cg"><option value="all">All teachers</option><option value="approved">Approved teachers</option><option value="pending">Paid, waiting for approval</option><option value="unpaid">Teachers who have not paid</option></select></label>
   <label class="full">Subject<input id="cs" required maxlength="120"></label>
-  <label class="full">Message<textarea id="cb" rows="7" required maxlength="5000" placeholder="Each teacher gets this with their name at the top."></textarea></label>
+  <label class="full">Message<textarea id="cb" rows="7" required maxlength="3000" placeholder="Each teacher gets this with their name at the top."></textarea></label>
   <p class="full"><small id="cc"></small></p><button class="btn">Send email</button></form>
   <h3 class="sec">Or choose people</h3>
   <div id="cl">${tch.length?tch.map(u=>`<label class="chk" style="display:block;margin:6px 0"><input type="checkbox" data-c="${u.id}"> ${esc(u.name)} <small>${esc(u.email)} · ${u.approved?"Approved":feeOk(u)?"Awaiting approval":"Unpaid"}</small></label>`).join(""):empty("No teachers yet","Teachers appear here after they sign up.")}</div>
@@ -332,6 +360,23 @@ remsettings:["Reminder settings",()=>{
 
 website:["Website data",()=>`<p>The public home page reads one document with your courses, published teachers and lesson plans. Only approved teachers are shown. It updates automatically when you save a course, a lesson plan, or a teacher approval. Press the button after a teacher changes their profile, or the first time you set this up.</p><div class="acts"><button class="btn" data-act="pubsite">Publish website data now</button></div>`],
 
+approvals:["Review queue",()=>{
+  const tn=id=>(users.find(u=>u.id===id)||{}).name||"Unknown teacher";
+  const nq=quizzes.filter(z=>z.status==="approved"&&z.reviewed===false),nm=mats.filter(m=>m.status==="approved"&&m.reviewed===false);
+  const rq=quizzes.filter(z=>z.status==="removed"),rm=mats.filter(m=>m.status==="removed");
+  const ab=(c,id)=>bt("review",id,"Mark reviewed",false,`data-c="${c}" data-v="reviewed"`)+bt("review",id,"Take down",true,`data-c="${c}" data-v="removed"`);
+  const rs=(c,id)=>bt("review",id,"Restore",true,`data-c="${c}" data-v="restored"`);
+  const qv=z=>(z.questions||[]).map((q,i)=>`<p><strong>${i+1}. ${esc(q.text)}</strong><br><small>${q.options.map((o,j)=>(q.correct.includes(j)?"✓ ":"· ")+esc(o)).join("<br>")}</small></p>`).join("");
+  const mrow=(m,acts)=>`<div class="row"><div><strong>${esc(m.title)}</strong> <span class="pill">${esc(m.type||"Notes")}</span> <span class="pill">${esc(m.level||"All levels")}</span><small>Teacher ${esc(tn(m.teacherId))} · ${m.studentName?esc(m.studentName):"All their students"} · ${esc(m.fileName||m.link||"")} · ${fd(m.createdAt)}</small></div><div class="acts">${m.link?`<a class="btn line sm" href="${esc(m.link)}" target="_blank" rel="noopener">Open</a>`:bt("openmat",m.id,"Open")}${acts}</div></div>`;
+  return (qErr?`<p class="msg err">Some items could not be loaded. Publish the Firestore rules for quizzes and materials.</p>`:"")+
+  `<p>Quizzes and uploads are live as soon as teachers post them. Go through each one here. Take down anything wrong, and the teacher is told why.</p>
+  <h3 class="sec">Quizzes to review (${nq.length})</h3>`+
+  (nq.length?nq.map(z=>`<details class="qz row" style="display:block"><summary><strong>${esc(z.title)}</strong> <span class="pill">${esc(z.level||"All levels")}</span><small>Teacher ${esc(tn(z.teacherId))} · ${z.studentName?esc(z.studentName):"All their students"} · ${(z.questions||[]).length} questions · posted ${fd(z.submittedAt||z.createdAt)}</small></summary>${qv(z)}<div class="acts">${ab("quizzes",z.id)}</div></details>`).join(""):empty("Nothing to review","New quizzes appear here."))+
+  `<h3 class="sec">Materials to review (${nm.length})</h3>`+
+  (nm.length?nm.map(m=>mrow(m,ab("materials",m.id))).join(""):empty("Nothing to review","New uploads appear here."))+
+  `<h3 class="sec">Taken down (${rq.length+rm.length})</h3>`+
+  (rq.length+rm.length?rq.map(z=>`<div class="row"><div><strong>${esc(z.title)}</strong> <span class="pill">Quiz</span><small>Teacher ${esc(tn(z.teacherId))} · ${esc(z.reviewNote||"")}</small></div><div class="acts">${rs("quizzes",z.id)}</div></div>`).join("")+rm.map(m=>mrow(m,rs("materials",m.id))).join(""):empty("Nothing taken down","Items you remove appear here, and you can restore them."))}],
+
 quizzes:["Quiz results",()=>{
   const tot=attempts.length,avg=tot?Math.round(attempts.reduce((a,x)=>a+(x.total?x.score/x.total:0),0)/tot*100):0;
   return (qErr?`<p class="msg err">Quizzes could not be loaded. Publish Firestore rules that let admins read quizzes and quizAttempts.</p>`:"")+
@@ -346,7 +391,7 @@ quizzes:["Quiz results",()=>{
   const draw=()=>{const q=$("zq").value.trim().toLowerCase();
    const l=quizzes.filter(z=>!q||(z.title+" "+tn(z)).toLowerCase().includes(q)||attempts.some(a=>a.quizId===z.id&&(a.studentName||"").toLowerCase().includes(q)));
    $("zl").innerHTML=l.length?l.map(z=>{const at=attempts.filter(a=>a.quizId===z.id),av=at.length?Math.round(at.reduce((s,a)=>s+pc(a),0)/at.length):0,n=(z.questions||[]).length;
-    return `<details class="qz row" style="display:block"><summary><strong>${esc(z.title)}</strong> <span class="pill">${esc(z.level||"All levels")}</span><small>Teacher ${esc(tn(z))} · ${z.studentName?esc(z.studentName):"All students"} · ${n} question${n===1?"":"s"} · ${at.length} attempt${at.length===1?"":"s"}${at.length?" · average "+av+"%":""}</small></summary>`+
+    return `<details class="qz row" style="display:block"><summary><strong>${esc(z.title)}</strong> <span class="pill">${esc(z.level||"All levels")}</span> <span class="pill">${z.status==="removed"?"Taken down":z.reviewed===false?"Awaiting review":"Reviewed"}</span><small>Teacher ${esc(tn(z))} · ${z.studentName?esc(z.studentName):"All students"} · ${n} question${n===1?"":"s"} · ${at.length} attempt${at.length===1?"":"s"}${at.length?" · average "+av+"%":""}</small></summary>`+
      (at.length?at.map(a=>`<details><summary>${esc(a.studentName||"Student")} · ${a.score}/${a.total} (${pc(a)}%) · ${fd(a.date)}</summary>${det(z,a)}</details>`).join(""):"<p><small>No attempts yet.</small></p>")+`</details>`}).join(""):empty("No quizzes found",quizzes.length?"Try another search.":"Quizzes teachers create will appear here.")};
   $("zq").oninput=draw;draw()}],
 
@@ -402,6 +447,25 @@ async function bulkRun(ls,mode){
 const FOREVER=()=>Timestamp.fromDate(new Date("2099-12-31T00:00:00Z"));
 const ACT={
  async pubsite(b){flash("Publishing…");const d=await publishLanding();flash("Published: "+d.courses.length+" courses, "+d.teachers.length+" teachers, "+d.plans.length+" topics.");b.disabled=false},
+ // Downloads the teacher activity table for the chosen period as a CSV file
+ async actcsv(b){const q=v=>'"'+String(v??"").replace(/"/g,'""')+'"';
+   const h=["Teacher","Email","M-Pesa phone","M-Pesa name","Lessons taught","Absent","Cancelled","Quizzes set","Uploads","Student quiz attempts"];
+   const rows=actRows(actM).map(r=>[r.u.name,r.u.email,r.u.payoutPhone,r.u.payoutName,r.taught,r.absent,r.cancelled,r.quizzes,r.mats,r.attempts]);
+   const u=URL.createObjectURL(new Blob([[h,...rows].map(a=>a.map(q).join(",")).join("\n")],{type:"text/csv"}));
+   const a=document.createElement("a");a.href=u;a.download="teacher-activity-"+actM+".csv";a.click();setTimeout(()=>URL.revokeObjectURL(u),5000);b.disabled=false},
+ // Quizzes and materials are live at once. The admin marks them reviewed, takes them down, or restores them.
+ async review(b){const c=b.dataset.c,v=b.dataset.v,id=b.dataset.id;let d;
+   if(v==="reviewed")d={reviewed:true,reviewedAt:serverTimestamp()};
+   else if(v==="restored")d={status:"approved",reviewed:true,reviewedAt:serverTimestamp(),reviewNote:deleteField()};
+   else{const n=prompt("Why is it being taken down? The teacher will see this:","");if(n===null){b.disabled=false;return}d={status:"removed",reviewed:true,reviewedAt:serverTimestamp(),reviewNote:n.trim()}}
+   await updateDoc(doc(db,c,id),d);
+   await refresh(v==="removed"?"Taken down. Students can no longer see it.":v==="restored"?"Restored.":"Marked as reviewed.")},
+ async openmat(b){const w=window.open("","_blank");
+   try{const r=await fetch((FB.WORKER_URL||"").trim().replace(/\/+$/,"")+"/file/"+b.dataset.id,{headers:{Authorization:"Bearer "+await auth.currentUser.getIdToken()}});
+     if(!r.ok)throw new Error("bad response");
+     const u=URL.createObjectURL(await r.blob());w.location=u;setTimeout(()=>URL.revokeObjectURL(u),120000)
+   }catch{if(w)w.close();flash("Could not open the file. The file server must allow admins to read files.",false)}
+   b.disabled=false},
  async role(b){const r=b.dataset.r;if(!confirm("Change this person to "+r+"?"))return;await updateDoc(doc(db,"users",b.dataset.id),{role:r});await refresh("Role changed to "+r+".")},
  // Deletes the login and the person's data on the server. Payment records are kept.
  async deluser(b){const u=users.find(x=>x.id===b.dataset.id);if(!u){b.disabled=false;return}
